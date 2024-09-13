@@ -169,7 +169,19 @@ If we binary encode this it could be pretty fast to load? (But maybe even just J
 
 
 
+# Core commands
 
+## Creating a new project
+
+> `wrought init <path> --package=<package>`
+
+Creates a new wrought project at the specified path, and installs the specified packages (script bundles).
+
+## Project status
+
+### Get file status.
+
+### Get packages steps.
 
 
 

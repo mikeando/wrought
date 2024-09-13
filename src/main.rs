@@ -1,6 +1,5 @@
 use std::{
-    path::{Path, PathBuf},
-    sync::{Arc, Mutex},
+    fs, path::{Path, PathBuf}, sync::{Arc, Mutex}
 };
 
 use backend::{Backend, DummyBackend};
@@ -143,8 +142,15 @@ struct Cli {
 #[derive(Debug, Subcommand)]
 enum Command {
     FileStatus(FileStatusCmd),
-    Init,
+    Init(InitCmd),
     HelloWorld,
+}
+
+#[derive(Debug, Parser)]
+struct InitCmd {
+    path: PathBuf, 
+    #[arg(long)]
+    package: String,
 }
 
 #[derive(Debug, Parser)] // requires `derive` feature
@@ -164,8 +170,28 @@ fn main() {
             let mut w = Wrought::new(Arc::new(Mutex::new(DummyBackend {})));
             hello_world(&mut w);
         }
-        Command::Init => {
-            DummyEventLog::init("wrought.db").unwrap();
+        Command::Init(cmd) => {
+            let path = cmd.path;
+
+            // TODO: Make this configurable.
+            let src_package_dir = PathBuf::from("./resources/packages/");
+            let project_package_dir = path.join(".wrought").join("packages");
+
+            fs::create_dir_all(&path).unwrap();
+            fs::create_dir_all(&path.join(".wrought")).unwrap();
+            DummyEventLog::init(path.join(".wrought").join("wrought.db")).unwrap();
+            fs::create_dir_all(&project_package_dir).unwrap();
+
+            for entry in fs::read_dir(src_package_dir.join(cmd.package)).unwrap() {
+                let entry = entry.unwrap();
+                let file_type = entry.file_type().unwrap();
+        
+                // TODO: Handle sub-driectories if we want this to be recursive.
+                if file_type.is_file() {
+                    // Copy files
+                    fs::copy(entry.path(), project_package_dir.join(entry.file_name())).unwrap();
+                }
+            }
         }
     }
 }
