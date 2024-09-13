@@ -317,3 +317,105 @@ pub fn print_single_file_status(result: &SingleFileStatusResult) {
         }
     }
 }
+
+
+pub mod api {
+
+    // Declare the extern functions that will be provided by the host
+    #[link(wasm_import_module = "env")]
+    extern "C" {
+        // Returns a "descriptor"
+        fn wrought_read_file(path_ptr: *const u8, path_len: usize) -> usize;
+        fn wrought_write_file(path_ptr: *const u8, path_len: usize, content_ptr: *const u8, content_len: usize) -> usize;
+        fn wrought_get_metadata(path_ptr: *const u8, path_len: usize, key_ptr: *const u8, key_len: usize) -> usize;
+        fn wrought_set_metadata(path_ptr: *const u8, path_len: usize, key_ptr: *const u8, key_len: usize, value_ptr: *const u8, value_len:usize) -> usize;
+    
+        // returns 1 if the descriptor is for an error, 0 if it is for a result.
+        // Either way, the data is obtained by repeated calls to wrought_descriptor_read.
+        fn wrought_descriptor_is_err(rd: usize) -> usize;
+
+        // reads part of a descriptor into a provided buffer, returns the amount of data
+        // written. If it returns 0 then every thing has been read.
+        fn wrought_descriptor_read(rd: usize, buf_ptr: *mut u8, buf_len: usize) -> usize;
+
+        // close the descriptor as we don't need it any more.
+        fn wrought_descriptor_close(rd: usize);
+    }
+
+
+    use std::path::Path;
+
+    use serde::Deserialize;
+ 
+    #[derive(Deserialize)]
+    enum WroughtErrorCode {
+        Unknown
+    }
+
+    #[derive(Deserialize)]
+    struct WroughtError {
+        message: String,
+        code: WroughtErrorCode,
+    }
+
+    type Result<T> = std::result::Result<T, WroughtError>;
+
+    // This is what we're going to make available to the scripts
+    pub struct WroughtApi {}
+
+    impl WroughtApi {
+
+        unsafe fn read_descriptor(rd: usize) -> Vec<u8> {
+            let mut result = vec![];
+            // TODO: Make this bigger?
+            let mut buf = [0u8; 256];
+            loop {
+                let len = wrought_descriptor_read(rd, buf.as_mut_ptr(), buf.len());
+                if len==0 { break; }
+                result.copy_from_slice(&buf[0..len]);
+            }
+            return result;
+        }
+
+        pub fn read_file(&self, path: &Path) -> Result<Option<Vec<u8>>> {
+            let (is_err, data) = unsafe {
+                let p = format!("{}", path.display());
+                let rd = wrought_read_file(p.as_ptr(), p.len());
+                let is_err = wrought_descriptor_is_err(rd)==1;
+                let data = Self::read_descriptor(rd);
+                wrought_descriptor_close(rd);
+                (is_err, data)
+            };
+            if is_err {
+                let e:WroughtError = serde_json::from_slice(&data).unwrap();
+                Err(e)
+            } else {
+                let v: Option<Vec<u8>> = serde_json::from_slice(&data).unwrap();
+                Ok(v)
+            }
+        }
+        pub fn write_file(&self, path:&Path, content: &[u8]) -> Result<()> {
+            let (is_err, data) = unsafe {
+                let p = format!("{}", path.display());
+                let rd = wrought_write_file(p.as_ptr(), p.len(), content.as_ptr(), content.len());
+                let is_err = wrought_descriptor_is_err(rd)==1;
+                let data = Self::read_descriptor(rd);
+                wrought_descriptor_close(rd);
+                (is_err, data)
+            };
+            if is_err {
+                let e:WroughtError = serde_json::from_slice(&data).unwrap();
+                Err(e)
+            } else {
+                Ok(())
+            }
+        }
+        pub fn get_metadata(&self, path: &Path, key: &str) -> Result<Option<Vec<u8>>> {
+            todo!();
+        }
+        pub fn set_metadata(&self, path: &Path, key: &str, value: &[u8]) -> Result<()> {
+            todo!();
+        }
+    }
+
+}
