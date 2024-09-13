@@ -2,6 +2,7 @@ use std::{
     fs, path::{Path, PathBuf}, sync::{Arc, Mutex}
 };
 
+use anyhow::Context;
 use backend::{Backend, DummyBackend};
 use clap::{Parser, Subcommand};
 
@@ -158,6 +159,41 @@ struct FileStatusCmd {
     path: PathBuf,
 }
 
+fn find_first_existing_parent(starting_dir: &Path) -> anyhow::Result<Option<PathBuf>> {
+    let mut current_dir: &Path = &starting_dir;
+
+    loop {
+        if current_dir.exists() {
+            return Ok(Some(current_dir.to_path_buf()));
+        }
+
+        let parent_dir = current_dir.parent();
+        match parent_dir {
+            Some(parent) => current_dir = parent,
+            None => return Ok(None),
+        }
+    }
+}
+
+fn find_marker_dir(starting_dir: &Path, marker: &str) -> std::io::Result<Option<PathBuf>> {
+    let starting_dir = starting_dir.canonicalize()?;
+    let mut current_dir: &Path = &starting_dir;
+
+    loop {
+        let marker_path = current_dir.join(marker);
+        if marker_path.is_dir() {
+            return Ok(Some(current_dir.to_path_buf()));
+        }
+
+        let parent_dir = current_dir.parent();
+        match parent_dir {
+            Some(parent) => current_dir = parent,
+            None => return Ok(None),
+        }
+    }
+}
+
+
 fn main() {
     let args = Cli::parse();
     match args.command {
@@ -172,6 +208,17 @@ fn main() {
         }
         Command::Init(cmd) => {
             let path = cmd.path;
+
+            // Check the target is not already in a project.
+            let check = || -> anyhow::Result<Option<PathBuf>> {
+                let existing_parent = find_first_existing_parent(&path).context("in find_first_existing_parent")?;
+                let Some(existing_parent) = existing_parent else { return Ok(None); };
+                Ok(find_marker_dir(&existing_parent, ".wrought").context("in find_marker_dir")?)
+            };
+
+            if let Some(parent_path) = check().unwrap() {
+                panic!("Path '{}' is part of project with root '{}'", path.display(), parent_path.display() );
+            }
 
             // TODO: Make this configurable.
             let src_package_dir = PathBuf::from("./resources/packages/");
