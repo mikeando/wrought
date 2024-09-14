@@ -145,10 +145,13 @@ struct Cli {
     command: Command,
 }
 
+
+
 #[derive(Debug, Subcommand)]
 enum Command {
     FileStatus(FileStatusCmd),
     Init(InitCmd),
+    Status(StatusCmd),
     HelloWorld,
 }
 
@@ -157,6 +160,11 @@ struct InitCmd {
     path: PathBuf, 
     #[arg(long)]
     package: String,
+}
+
+#[derive(Debug, Parser)]
+struct StatusCmd {
+
 }
 
 #[derive(Debug, Parser)] // requires `derive` feature
@@ -235,6 +243,23 @@ fn cmd_init(cmd: &InitCmd) -> anyhow::Result<()> {
     Ok(())
 }
 
+fn cmd_status(project_root: &Path, cmd: StatusCmd) -> anyhow::Result<()> {
+
+    // For new we assume the project status reports are in .wrought/status
+    for entry in fs::read_dir(project_root.join(".wrought").join("status"))? {
+        let entry = entry?;
+        let md = entry.metadata()?;
+        if !md.is_file() {
+            eprintln!("status does not support subdirectories: {}", entry.path().display());
+            continue;
+        }
+        let content = std::fs::read_to_string(entry.path())?;
+        println!("{}", content);
+    }
+
+    Ok(())
+}
+
 fn main() {
     let args = Cli::parse();
 
@@ -272,6 +297,9 @@ fn main() {
         Command::HelloWorld => {
             let mut w = Wrought::new(Arc::new(Mutex::new(DummyBackend {})));
             hello_world(&mut w);
+        }
+        Command::Status(cmd) => {
+            cmd_status(&project_root, cmd).unwrap();
         }
         Command::Init(_) => unreachable!("`init` should already have been handled")
     }
