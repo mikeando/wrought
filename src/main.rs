@@ -135,6 +135,11 @@ pub fn hello_world(wrought: &mut Wrought) {
 /// Search for a pattern in a file and display the lines that contain it.
 #[derive(Parser)]
 struct Cli {
+
+    /// pick a different project root
+    #[arg(long)]
+    project_root: Option<PathBuf>,
+
     /// Command to run
     #[command(subcommand)]
     command: Command,
@@ -194,8 +199,70 @@ fn find_marker_dir(starting_dir: &Path, marker: &str) -> std::io::Result<Option<
 }
 
 
+fn cmd_init(cmd: &InitCmd) -> anyhow::Result<()> {
+    let path = &cmd.path;
+
+    // Check the target is not already in a project.
+    let check = || -> anyhow::Result<Option<PathBuf>> {
+        let existing_parent = find_first_existing_parent(&path).context("in find_first_existing_parent")?;
+        let Some(existing_parent) = existing_parent else { return Ok(None); };
+        Ok(find_marker_dir(&existing_parent, ".wrought").context("in find_marker_dir")?)
+    };
+
+    if let Some(parent_path) = check().unwrap() {
+        panic!("Path '{}' is part of project with root '{}'", path.display(), parent_path.display() );
+    }
+
+    // TODO: Make this configurable.
+    let src_package_dir = PathBuf::from("./resources/packages/");
+    let project_package_dir = path.join(".wrought").join("packages");
+
+    fs::create_dir_all(&path).unwrap();
+    fs::create_dir_all(&path.join(".wrought")).unwrap();
+    DummyEventLog::init(path.join(".wrought").join("wrought.db")).unwrap();
+    fs::create_dir_all(&project_package_dir).unwrap();
+
+    for entry in fs::read_dir(src_package_dir.join(&cmd.package)).unwrap() {
+        let entry = entry.unwrap();
+        let file_type = entry.file_type().unwrap();
+
+        // TODO: Handle sub-driectories if we want this to be recursive.
+        if file_type.is_file() {
+            // Copy files
+            fs::copy(entry.path(), project_package_dir.join(entry.file_name())).unwrap();
+        }
+    }
+    Ok(())
+}
+
 fn main() {
     let args = Cli::parse();
+
+    // Have to handle Init differntly as it doesn't care about the project_root already
+    // existing etc.
+    if let Command::Init(cmd) = &args.command  {
+        cmd_init(cmd).unwrap();
+        return;
+    }
+
+    // Check the project_root exists
+    let project_root = match &args.project_root {
+        Some(p) => {
+            if !p.join(".wrought").is_dir() {
+                panic!("specified project root {} has no .wrought subdirectory - it is not a valid root", p.display());
+            }
+            p.clone()
+        },
+        None => {
+            match find_marker_dir(&PathBuf::from("."), ".wrought") {
+                Ok(Some(p)) => p,
+                Ok(None) => panic!("Unable to find project root for current directory"),
+                Err(e) => panic!("Error looking for project root: {}", e),
+            }
+        },
+    };
+    eprintln!("Using project root: '{}'", project_root.display());
+
     match args.command {
         Command::FileStatus(cmd) => {
             let backend = DummyEventLog::open("wrought.db").unwrap();
@@ -206,40 +273,7 @@ fn main() {
             let mut w = Wrought::new(Arc::new(Mutex::new(DummyBackend {})));
             hello_world(&mut w);
         }
-        Command::Init(cmd) => {
-            let path = cmd.path;
-
-            // Check the target is not already in a project.
-            let check = || -> anyhow::Result<Option<PathBuf>> {
-                let existing_parent = find_first_existing_parent(&path).context("in find_first_existing_parent")?;
-                let Some(existing_parent) = existing_parent else { return Ok(None); };
-                Ok(find_marker_dir(&existing_parent, ".wrought").context("in find_marker_dir")?)
-            };
-
-            if let Some(parent_path) = check().unwrap() {
-                panic!("Path '{}' is part of project with root '{}'", path.display(), parent_path.display() );
-            }
-
-            // TODO: Make this configurable.
-            let src_package_dir = PathBuf::from("./resources/packages/");
-            let project_package_dir = path.join(".wrought").join("packages");
-
-            fs::create_dir_all(&path).unwrap();
-            fs::create_dir_all(&path.join(".wrought")).unwrap();
-            DummyEventLog::init(path.join(".wrought").join("wrought.db")).unwrap();
-            fs::create_dir_all(&project_package_dir).unwrap();
-
-            for entry in fs::read_dir(src_package_dir.join(cmd.package)).unwrap() {
-                let entry = entry.unwrap();
-                let file_type = entry.file_type().unwrap();
-        
-                // TODO: Handle sub-driectories if we want this to be recursive.
-                if file_type.is_file() {
-                    // Copy files
-                    fs::copy(entry.path(), project_package_dir.join(entry.file_name())).unwrap();
-                }
-            }
-        }
+        Command::Init(_) => unreachable!("`init` should already have been handled")
     }
 }
 
