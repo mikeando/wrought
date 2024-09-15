@@ -1,0 +1,1 @@
+print("In the init script")

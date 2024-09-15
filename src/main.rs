@@ -238,6 +238,9 @@ fn cmd_init(cmd: &InitCmd) -> anyhow::Result<()> {
     DummyEventLog::init(path.join(".wrought").join("wrought.db")).unwrap();
     fs::create_dir_all(&project_package_dir).unwrap();
 
+    let project_package = project_package_dir.join(&cmd.package);
+    fs::create_dir_all(&project_package).unwrap();
+
     for entry in fs::read_dir(src_package_dir.join(&cmd.package)).unwrap() {
         let entry = entry.unwrap();
         let file_type = entry.file_type().unwrap();
@@ -245,8 +248,15 @@ fn cmd_init(cmd: &InitCmd) -> anyhow::Result<()> {
         // TODO: Handle sub-driectories if we want this to be recursive.
         if file_type.is_file() {
             // Copy files
-            fs::copy(entry.path(), project_package_dir.join(entry.file_name())).unwrap();
+            fs::copy(entry.path(), project_package.join(entry.file_name())).unwrap();
         }
+    }
+    // Now if there is an init script we should run it.
+    println!("Running init scripts");
+    if project_package.join("init.luau").is_file() {
+        run_script(&project_package.join("init.luau"))?;
+    } else {
+        println!("No init script at '{}'", project_package.join("init.luau").display());
     }
     Ok(())
 }
