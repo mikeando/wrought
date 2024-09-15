@@ -1,8 +1,10 @@
 use std::{
-    fs, path::{Path, PathBuf}, sync::{Arc, Mutex}
+    fs,
+    path::{Path, PathBuf},
+    sync::{Arc, Mutex},
 };
 
-use anyhow::{bail, Context};
+use anyhow::Context;
 use backend::{Backend, DummyBackend};
 use clap::{Parser, Subcommand};
 
@@ -62,7 +64,11 @@ impl MicroService {
         key: K,
     ) -> anyhow::Result<Option<MetadataEntry>> {
         let key = key.into();
-        let value = self.backend.lock().unwrap().get_metadata(path.as_ref(), &key)?;
+        let value = self
+            .backend
+            .lock()
+            .unwrap()
+            .get_metadata(path.as_ref(), &key)?;
 
         let event = Event {
             id: 0,
@@ -85,11 +91,11 @@ impl MicroService {
     ) -> anyhow::Result<()> {
         let key = key.into();
         let value = Some(value.into());
-        let before_value = self
-            .backend
-            .lock()
-            .unwrap()
-            .set_metadata(path.as_ref(), &key, &value)?;
+        let before_value =
+            self.backend
+                .lock()
+                .unwrap()
+                .set_metadata(path.as_ref(), &key, &value)?;
         let event = Event {
             id: 0,
             group_id: 0,
@@ -105,7 +111,11 @@ impl MicroService {
     }
 
     pub fn write_file<P: AsRef<Path>>(&mut self, path: P, value: &[u8]) -> anyhow::Result<()> {
-        let (before_hash, after_hash) = self.backend.lock().unwrap().write_file(path.as_ref(), value)?;
+        let (before_hash, after_hash) = self
+            .backend
+            .lock()
+            .unwrap()
+            .write_file(path.as_ref(), value)?;
         self.events.push(Event {
             id: 0,
             group_id: 0,
@@ -137,7 +147,6 @@ pub fn hello_world(wrought: &mut Wrought) {
 /// Search for a pattern in a file and display the lines that contain it.
 #[derive(Parser)]
 struct Cli {
-
     /// pick a different project root
     #[arg(long)]
     project_root: Option<PathBuf>,
@@ -146,8 +155,6 @@ struct Cli {
     #[command(subcommand)]
     command: Command,
 }
-
-
 
 #[derive(Debug, Subcommand)]
 enum Command {
@@ -160,28 +167,26 @@ enum Command {
 
 #[derive(Debug, Parser)]
 struct InitCmd {
-    path: PathBuf, 
+    path: PathBuf,
     #[arg(long)]
     package: String,
 }
 
 #[derive(Debug, Parser)]
-struct StatusCmd {
-
-}
+struct StatusCmd {}
 
 #[derive(Debug, Parser)]
 struct FileStatusCmd {
     path: PathBuf,
 }
 
-#[derive(Debug,Parser)]
+#[derive(Debug, Parser)]
 struct RunScriptCmd {
     script_name: String,
 }
 
 fn find_first_existing_parent(starting_dir: &Path) -> anyhow::Result<Option<PathBuf>> {
-    let mut current_dir: &Path = &starting_dir;
+    let mut current_dir = starting_dir;
 
     loop {
         if current_dir.exists() {
@@ -196,7 +201,7 @@ fn find_first_existing_parent(starting_dir: &Path) -> anyhow::Result<Option<Path
     }
 }
 
-fn find_marker_dir(starting_dir: &Path, marker: &str) -> std::io::Result<Option<PathBuf>> {
+fn find_marker_dir(starting_dir: &Path, marker: &str) -> anyhow::Result<Option<PathBuf>> {
     let starting_dir = starting_dir.canonicalize()?;
     let mut current_dir: &Path = &starting_dir;
 
@@ -214,27 +219,33 @@ fn find_marker_dir(starting_dir: &Path, marker: &str) -> std::io::Result<Option<
     }
 }
 
-
 fn cmd_init(cmd: &InitCmd) -> anyhow::Result<()> {
     let path = &cmd.path;
 
     // Check the target is not already in a project.
     let check = || -> anyhow::Result<Option<PathBuf>> {
-        let existing_parent = find_first_existing_parent(&path).context("in find_first_existing_parent")?;
-        let Some(existing_parent) = existing_parent else { return Ok(None); };
-        Ok(find_marker_dir(&existing_parent, ".wrought").context("in find_marker_dir")?)
+        let existing_parent =
+            find_first_existing_parent(path).context("in find_first_existing_parent")?;
+        let Some(existing_parent) = existing_parent else {
+            return Ok(None);
+        };
+        find_marker_dir(&existing_parent, ".wrought").context("in find_marker_dir")
     };
 
     if let Some(parent_path) = check().unwrap() {
-        panic!("Path '{}' is part of project with root '{}'", path.display(), parent_path.display() );
+        panic!(
+            "Path '{}' is part of project with root '{}'",
+            path.display(),
+            parent_path.display()
+        );
     }
 
     // TODO: Make this configurable.
     let src_package_dir = PathBuf::from("./resources/packages/");
     let project_package_dir = path.join(".wrought").join("packages");
 
-    fs::create_dir_all(&path).unwrap();
-    fs::create_dir_all(&path.join(".wrought")).unwrap();
+    fs::create_dir_all(path).unwrap();
+    fs::create_dir_all(path.join(".wrought")).unwrap();
     DummyEventLog::init(path.join(".wrought").join("wrought.db")).unwrap();
     fs::create_dir_all(&project_package_dir).unwrap();
 
@@ -256,19 +267,24 @@ fn cmd_init(cmd: &InitCmd) -> anyhow::Result<()> {
     if project_package.join("init.luau").is_file() {
         run_script(&project_package.join("init.luau"))?;
     } else {
-        println!("No init script at '{}'", project_package.join("init.luau").display());
+        println!(
+            "No init script at '{}'",
+            project_package.join("init.luau").display()
+        );
     }
     Ok(())
 }
 
-fn cmd_status(project_root: &Path, cmd: StatusCmd) -> anyhow::Result<()> {
-
+fn cmd_status(project_root: &Path, _cmd: StatusCmd) -> anyhow::Result<()> {
     // For new we assume the project status reports are in .wrought/status
     for entry in fs::read_dir(project_root.join(".wrought").join("status"))? {
         let entry = entry?;
         let md = entry.metadata()?;
         if !md.is_file() {
-            eprintln!("status does not support subdirectories: {}", entry.path().display());
+            eprintln!(
+                "status does not support subdirectories: {}",
+                entry.path().display()
+            );
             continue;
         }
         let content = std::fs::read_to_string(entry.path())?;
@@ -279,7 +295,10 @@ fn cmd_status(project_root: &Path, cmd: StatusCmd) -> anyhow::Result<()> {
 }
 
 fn cmd_run_script(project_root: &Path, cmd: RunScriptCmd) -> anyhow::Result<()> {
-    let script_path = project_root.join(".wrought").join("packages").join(cmd.script_name);
+    let script_path = project_root
+        .join(".wrought")
+        .join("packages")
+        .join(cmd.script_name);
     run_script(&script_path)?;
     Ok(())
 }
@@ -289,7 +308,7 @@ fn main() {
 
     // Have to handle Init differntly as it doesn't care about the project_root already
     // existing etc.
-    if let Command::Init(cmd) = &args.command  {
+    if let Command::Init(cmd) = &args.command {
         cmd_init(cmd).unwrap();
         return;
     }
@@ -301,13 +320,11 @@ fn main() {
                 panic!("specified project root {} has no .wrought subdirectory - it is not a valid root", p.display());
             }
             p.clone()
-        },
-        None => {
-            match find_marker_dir(&PathBuf::from("."), ".wrought") {
-                Ok(Some(p)) => p,
-                Ok(None) => panic!("Unable to find project root for current directory"),
-                Err(e) => panic!("Error looking for project root: {}", e),
-            }
+        }
+        None => match find_marker_dir(&PathBuf::from("."), ".wrought") {
+            Ok(Some(p)) => p,
+            Ok(None) => panic!("Unable to find project root for current directory"),
+            Err(e) => panic!("Error looking for project root: {}", e),
         },
     };
     eprintln!("Using project root: '{}'", project_root.display());
@@ -328,7 +345,7 @@ fn main() {
         Command::RunScript(cmd) => {
             cmd_run_script(&project_root, cmd).unwrap();
         }
-        Command::Init(_) => unreachable!("`init` should already have been handled")
+        Command::Init(_) => unreachable!("`init` should already have been handled"),
     }
 }
 
@@ -480,7 +497,6 @@ pub fn print_single_file_status(result: &SingleFileStatusResult) {
     }
 }
 
-
 pub mod api {
 
     // Declare the extern functions that will be provided by the host
@@ -488,10 +504,27 @@ pub mod api {
     extern "C" {
         // Returns a "descriptor"
         fn wrought_read_file(path_ptr: *const u8, path_len: usize) -> usize;
-        fn wrought_write_file(path_ptr: *const u8, path_len: usize, content_ptr: *const u8, content_len: usize) -> usize;
-        fn wrought_get_metadata(path_ptr: *const u8, path_len: usize, key_ptr: *const u8, key_len: usize) -> usize;
-        fn wrought_set_metadata(path_ptr: *const u8, path_len: usize, key_ptr: *const u8, key_len: usize, value_ptr: *const u8, value_len:usize) -> usize;
-    
+        fn wrought_write_file(
+            path_ptr: *const u8,
+            path_len: usize,
+            content_ptr: *const u8,
+            content_len: usize,
+        ) -> usize;
+        fn wrought_get_metadata(
+            path_ptr: *const u8,
+            path_len: usize,
+            key_ptr: *const u8,
+            key_len: usize,
+        ) -> usize;
+        fn wrought_set_metadata(
+            path_ptr: *const u8,
+            path_len: usize,
+            key_ptr: *const u8,
+            key_len: usize,
+            value_ptr: *const u8,
+            value_len: usize,
+        ) -> usize;
+
         // returns 1 if the descriptor is for an error, 0 if it is for a result.
         // Either way, the data is obtained by repeated calls to wrought_descriptor_read.
         fn wrought_descriptor_is_err(rd: usize) -> usize;
@@ -504,18 +537,17 @@ pub mod api {
         fn wrought_descriptor_close(rd: usize);
     }
 
-
     use std::path::Path;
 
     use serde::Deserialize;
- 
+
     #[derive(Deserialize)]
     enum WroughtErrorCode {
-        Unknown
+        Unknown,
     }
 
     #[derive(Deserialize)]
-    struct WroughtError {
+    pub struct WroughtError {
         message: String,
         code: WroughtErrorCode,
     }
@@ -526,47 +558,48 @@ pub mod api {
     pub struct WroughtApi {}
 
     impl WroughtApi {
-
         unsafe fn read_descriptor(rd: usize) -> Vec<u8> {
             let mut result = vec![];
             // TODO: Make this bigger?
             let mut buf = [0u8; 256];
             loop {
                 let len = wrought_descriptor_read(rd, buf.as_mut_ptr(), buf.len());
-                if len==0 { break; }
+                if len == 0 {
+                    break;
+                }
                 result.copy_from_slice(&buf[0..len]);
             }
-            return result;
+            result
         }
 
         pub fn read_file(&self, path: &Path) -> Result<Option<Vec<u8>>> {
             let (is_err, data) = unsafe {
                 let p = format!("{}", path.display());
                 let rd = wrought_read_file(p.as_ptr(), p.len());
-                let is_err = wrought_descriptor_is_err(rd)==1;
+                let is_err = wrought_descriptor_is_err(rd) == 1;
                 let data = Self::read_descriptor(rd);
                 wrought_descriptor_close(rd);
                 (is_err, data)
             };
             if is_err {
-                let e:WroughtError = serde_json::from_slice(&data).unwrap();
+                let e: WroughtError = serde_json::from_slice(&data).unwrap();
                 Err(e)
             } else {
                 let v: Option<Vec<u8>> = serde_json::from_slice(&data).unwrap();
                 Ok(v)
             }
         }
-        pub fn write_file(&self, path:&Path, content: &[u8]) -> Result<()> {
+        pub fn write_file(&self, path: &Path, content: &[u8]) -> Result<()> {
             let (is_err, data) = unsafe {
                 let p = format!("{}", path.display());
                 let rd = wrought_write_file(p.as_ptr(), p.len(), content.as_ptr(), content.len());
-                let is_err = wrought_descriptor_is_err(rd)==1;
+                let is_err = wrought_descriptor_is_err(rd) == 1;
                 let data = Self::read_descriptor(rd);
                 wrought_descriptor_close(rd);
                 (is_err, data)
             };
             if is_err {
-                let e:WroughtError = serde_json::from_slice(&data).unwrap();
+                let e: WroughtError = serde_json::from_slice(&data).unwrap();
                 Err(e)
             } else {
                 Ok(())
@@ -579,5 +612,4 @@ pub mod api {
             todo!();
         }
     }
-
 }
