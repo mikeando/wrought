@@ -2,7 +2,7 @@ use std::{
     fs, path::{Path, PathBuf}, sync::{Arc, Mutex}
 };
 
-use anyhow::Context;
+use anyhow::{bail, Context};
 use backend::{Backend, DummyBackend};
 use clap::{Parser, Subcommand};
 
@@ -11,6 +11,7 @@ pub mod binary16;
 pub mod event_log;
 pub mod events;
 pub mod metadata;
+pub mod scripting_luau;
 
 use binary16::ContentHash;
 use event_log::{DummyEventLog, EventLog};
@@ -19,6 +20,7 @@ use events::{EventType, GetMetadataEvent, SetMetadataEvent, WriteFileEvent};
 
 use metadata::MetadataEntry;
 use metadata::MetadataKey;
+use scripting_luau::run_script;
 
 pub struct Wrought {
     backend: Arc<Mutex<dyn Backend>>,
@@ -151,6 +153,7 @@ struct Cli {
 enum Command {
     FileStatus(FileStatusCmd),
     Init(InitCmd),
+    RunScript(RunScriptCmd),
     Status(StatusCmd),
     HelloWorld,
 }
@@ -167,9 +170,14 @@ struct StatusCmd {
 
 }
 
-#[derive(Debug, Parser)] // requires `derive` feature
+#[derive(Debug, Parser)]
 struct FileStatusCmd {
     path: PathBuf,
+}
+
+#[derive(Debug,Parser)]
+struct RunScriptCmd {
+    script_name: String,
 }
 
 fn find_first_existing_parent(starting_dir: &Path) -> anyhow::Result<Option<PathBuf>> {
@@ -260,6 +268,12 @@ fn cmd_status(project_root: &Path, cmd: StatusCmd) -> anyhow::Result<()> {
     Ok(())
 }
 
+fn cmd_run_script(project_root: &Path, cmd: RunScriptCmd) -> anyhow::Result<()> {
+    let script_path = project_root.join(".wrought").join("packages").join(cmd.script_name);
+    run_script(&script_path)?;
+    Ok(())
+}
+
 fn main() {
     let args = Cli::parse();
 
@@ -300,6 +314,9 @@ fn main() {
         }
         Command::Status(cmd) => {
             cmd_status(&project_root, cmd).unwrap();
+        }
+        Command::RunScript(cmd) => {
+            cmd_run_script(&project_root, cmd).unwrap();
         }
         Command::Init(_) => unreachable!("`init` should already have been handled")
     }
