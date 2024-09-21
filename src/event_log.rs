@@ -11,7 +11,7 @@ pub trait EventLog {
 
     /// Input must have group_id and ids all set to zero.
     /// Returns the full group with id's correctly set.
-    fn add_event_groups(&mut self, group: &EventGroup) -> anyhow::Result<EventGroup>;
+    fn add_event_group(&mut self, group: &EventGroup) -> anyhow::Result<EventGroup>;
 }
 
 // --------
@@ -71,8 +71,19 @@ impl EventLog for DummyEventLog {
         Ok(Some(group))
     }
 
-    fn add_event_groups(&mut self, group: &EventGroup) -> anyhow::Result<EventGroup> {
-        todo!()
+    fn add_event_group(&mut self, group: &EventGroup) -> anyhow::Result<EventGroup> {
+        // Create the group.
+        self.conn.execute(
+            "INSERT INTO Groups (command) VALUES (?1)",
+            [group.command.clone()],
+        )?;
+        let group_id = self.conn.last_insert_rowid() as u64;
+        let mut stmt = self.conn.prepare("INSERT INTO Events (group_id, action_type, file_path, before_hash, after_hash) VALUES(?, ?, ?, ?, ?)")?;
+        for event in &group.events {
+            stmt.execute(self.row_from_event_no_id(&event.with_group_id(group_id)))?;
+        }
+        todo!();
+        // Ok(())
     }
 }
 
@@ -87,13 +98,16 @@ impl DummyEventLog {
                  id integer primary key,
                  group_id integer NOT NULL REFERENCES Groups(id),
                  action_type text NOT NULL,
-                 file_path text
+                 file_path text,
+                 before_hash text,
+                 after_hash text
              )",
             (),
         )?;
         conn.execute(
             "create table Groups (
-                 id integer primary key
+                 id integer primary key,
+                 command text NOT NULL
              )",
             (),
         )?;
@@ -165,5 +179,26 @@ impl DummyEventLog {
             events: vec![],
             is_most_recent_run: true,
         })
+    }
+
+    // Order is group_id, action_type, file_path, before_hash, after_hash
+    fn row_from_event_no_id(
+        &self,
+        event: &Event,
+    ) -> (String, String, String, Option<String>, Option<String>) {
+        // TODO: Make this work for more types
+        match &event.event_type {
+            // TODO: Fix the "???" values to use e.before_hash and e.after_hash
+            EventType::WriteFile(e) => (
+                event.group_id.to_string(),
+                "write".to_string(),
+                e.path.display().to_string(),
+                e.before_hash.as_ref().map(|h| h.to_string()),
+                e.after_hash.as_ref().map(|h| h.to_string()),
+            ),
+            EventType::ReadFile(_) => todo!(),
+            EventType::GetMetadata(_) => todo!(),
+            EventType::SetMetadata(_) => todo!(),
+        }
     }
 }

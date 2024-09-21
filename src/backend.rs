@@ -1,9 +1,11 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::{
     binary16::ContentHash,
     metadata::{MetadataEntry, MetadataKey},
 };
+
+use anyhow::anyhow;
 
 /// The backend is purely to access the data,
 /// it does not provide loging of the events, nor
@@ -33,7 +35,9 @@ pub trait Backend {
 
 // -----------------
 
-pub struct DummyBackend {}
+pub struct DummyBackend {
+    pub root: PathBuf,
+}
 
 impl Backend for DummyBackend {
     fn get_metadata(
@@ -66,6 +70,16 @@ impl Backend for DummyBackend {
             path,
             String::from_utf8_lossy(value).to_string()
         );
+
+        let p = self.root.join(path);
+        // TODO: This should check p and parent are within the root.
+        let parent = p
+            .parent()
+            .ok_or_else(|| anyhow!("Unable to find parent for {}", p.display()))?;
+        std::fs::create_dir_all(parent)?;
+        std::fs::write(p, value)?;
+
+        // TODO: Need to read the previous content if it exists.
         Ok((None, ContentHash::from_content(value)))
     }
 

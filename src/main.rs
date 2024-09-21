@@ -6,10 +6,12 @@ use std::{
 
 use anyhow::Context;
 use backend::{Backend, DummyBackend};
+use bridge::{Bridge, DummyBridge};
 use clap::{Parser, Subcommand};
 
 pub mod backend;
 pub mod binary16;
+pub mod bridge;
 pub mod event_log;
 pub mod events;
 pub mod metadata;
@@ -17,7 +19,7 @@ pub mod scripting_luau;
 
 use binary16::ContentHash;
 use event_log::{DummyEventLog, EventLog};
-use events::Event;
+use events::{Event, EventGroup};
 use events::{EventType, GetMetadataEvent, SetMetadataEvent, WriteFileEvent};
 
 use metadata::MetadataEntry;
@@ -264,8 +266,20 @@ fn cmd_init(cmd: &InitCmd) -> anyhow::Result<()> {
     }
     // Now if there is an init script we should run it.
     println!("Running init scripts");
+
+    let bridge = create_bridge(path)?;
+
     if project_package.join("init.luau").is_file() {
-        run_script(&project_package.join("init.luau"))?;
+        run_script(bridge.clone(), &project_package.join("init.luau"))?;
+        // TODO: Does this belong in the bridge?
+        let event_log = create_event_log(path).unwrap();
+        if let Some(event_group) = bridge.lock().unwrap().get_event_group() {
+            event_log
+                .lock()
+                .unwrap()
+                .add_event_group(&event_group)
+                .unwrap();
+        };
     } else {
         println!(
             "No init script at '{}'",
@@ -294,13 +308,38 @@ fn cmd_status(project_root: &Path, _cmd: StatusCmd) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn cmd_run_script(project_root: &Path, cmd: RunScriptCmd) -> anyhow::Result<()> {
+fn cmd_run_script(
+    bridge: Arc<Mutex<dyn Bridge>>,
+    project_root: &Path,
+    cmd: RunScriptCmd,
+) -> anyhow::Result<()> {
     let script_path = project_root
         .join(".wrought")
         .join("packages")
         .join(cmd.script_name);
-    run_script(&script_path)?;
+    run_script(bridge, &script_path)?;
     Ok(())
+}
+
+pub fn create_backend(path: &Path) -> anyhow::Result<Arc<Mutex<dyn Backend>>> {
+    Ok(Arc::new(Mutex::new(DummyBackend {
+        root: path.canonicalize()?,
+    })))
+}
+
+pub fn create_event_log(path: &Path) -> anyhow::Result<Arc<Mutex<dyn EventLog>>> {
+    Ok(Arc::new(Mutex::new(
+        DummyEventLog::open(path.join(".wrought").join("wrought.db")).unwrap(),
+    )))
+}
+
+pub fn create_bridge(path: &Path) -> anyhow::Result<Arc<Mutex<dyn Bridge>>> {
+    let backend = create_backend(path)?;
+    Ok(Arc::new(Mutex::new(DummyBridge {
+        root: path.canonicalize()?,
+        backend,
+        event_group: EventGroup::empty(),
+    })))
 }
 
 fn main() {
@@ -336,17 +375,28 @@ fn main() {
             print_single_file_status(&status);
         }
         Command::HelloWorld => {
-            let mut w = Wrought::new(Arc::new(Mutex::new(DummyBackend {})));
+            let backend = create_backend(&project_root).unwrap();
+            let mut w = Wrought::new(backend);
             hello_world(&mut w);
         }
         Command::Status(cmd) => {
             cmd_status(&project_root, cmd).unwrap();
         }
         Command::RunScript(cmd) => {
-            cmd_run_script(&project_root, cmd).unwrap();
+            let bridge = create_bridge(&project_root).unwrap();
+            cmd_run_script(bridge.clone(), &project_root, cmd).unwrap();
+            let event_log = create_event_log(&project_root).unwrap();
+            if let Some(event_group) = bridge.lock().unwrap().get_event_group() {
+                event_log
+                    .lock()
+                    .unwrap()
+                    .add_event_group(&event_group)
+                    .unwrap();
+            };
         }
         Command::Init(_) => unreachable!("`init` should already have been handled"),
     }
+    // TODO: Should the bridge had access to this?
 }
 
 // Things th emain app needs to be able to do.
