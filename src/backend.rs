@@ -72,6 +72,20 @@ impl Backend for DummyBackend {
         );
 
         let p = self.root.join(path);
+
+        // Check if the file exists
+        let original_hash = if p.is_file() {
+            let original_content = std::fs::read(&p);
+            match original_content {
+                Ok(original_contetnt) => {
+                    Some(ContentHash::from_content(&original_contetnt))
+                }
+                Err(_) => None
+            }
+        } else {
+            None
+        };
+
         // TODO: This should check p and parent are within the root.
         let parent = p
             .parent()
@@ -80,7 +94,7 @@ impl Backend for DummyBackend {
         std::fs::write(p, value)?;
 
         // TODO: Need to read the previous content if it exists.
-        Ok((None, ContentHash::from_content(value)))
+        Ok((original_hash, ContentHash::from_content(value)))
     }
 
     fn read_file(&self, path: &Path) -> anyhow::Result<Option<(ContentHash, Vec<u8>)>> {
