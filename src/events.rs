@@ -73,8 +73,60 @@ impl From<WriteFileEvent> for Event {
     }
 }
 
+impl From<ReadFileEvent> for EventType {
+    fn from(value: ReadFileEvent) -> Self {
+        EventType::ReadFile(value)
+    }
+}
+
+impl From<ReadFileEvent> for Event {
+    fn from(value: ReadFileEvent) -> Self {
+        let event_type = value.into();
+        Event {
+            id: 0,
+            group_id: 0,
+            event_type,
+        }
+    }
+}
+
+impl From<GetMetadataEvent> for EventType {
+    fn from(value: GetMetadataEvent) -> Self {
+        EventType::GetMetadata(value)
+    }
+}
+
+impl From<GetMetadataEvent> for Event {
+    fn from(value: GetMetadataEvent) -> Self {
+        let event_type = value.into();
+        Event {
+            id: 0,
+            group_id: 0,
+            event_type,
+        }
+    }
+}
+
+impl From<SetMetadataEvent> for EventType {
+    fn from(value: SetMetadataEvent) -> Self {
+        EventType::SetMetadata(value)
+    }
+}
+
+impl From<SetMetadataEvent> for Event {
+    fn from(value: SetMetadataEvent) -> Self {
+        let event_type = value.into();
+        Event {
+            id: 0,
+            group_id: 0,
+            event_type,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct EventGroup {
+    pub id: u64,
     pub command: String,
     pub events: Vec<Event>,
     pub is_most_recent_run: bool,
@@ -82,6 +134,7 @@ pub struct EventGroup {
 impl EventGroup {
     pub(crate) fn empty() -> EventGroup {
         EventGroup {
+            id: 0,
             command: "unknown".to_string(),
             events: vec![],
             is_most_recent_run: true,

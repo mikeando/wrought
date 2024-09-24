@@ -5,11 +5,17 @@ use std::{
 
 use crate::{
     backend::Backend,
-    events::{Event, EventGroup, WriteFileEvent},
+    events::{
+        Event, EventGroup, GetMetadataEvent, ReadFileEvent, SetMetadataEvent, WriteFileEvent,
+    },
+    metadata::{MetadataEntry, MetadataKey},
 };
 
 pub trait Bridge {
     fn write_file(&mut self, path: &Path, value: &[u8]) -> anyhow::Result<()>;
+    fn read_file(&mut self, path: &Path) -> anyhow::Result<Option<Vec<u8>>>;
+    fn get_metadata(&mut self, path: &Path, key: &str) -> anyhow::Result<Option<String>>;
+    fn set_metadata(&mut self, path: &Path, key: &str, value: &str) -> anyhow::Result<()>;
     fn get_event_group(&self) -> Option<EventGroup>;
 }
 
@@ -33,6 +39,48 @@ impl Bridge for DummyBridge {
         self.add_event(event.into());
         Ok(())
     }
+
+    fn read_file(&mut self, path: &Path) -> anyhow::Result<Option<Vec<u8>>> {
+        let v = self.backend.lock().unwrap().read_file(path)?;
+        let (content_hash, content) = match v {
+            Some((content_hash, content)) => (Some(content_hash), Some(content)),
+            None => (None, None),
+        };
+        let event = ReadFileEvent {
+            path: path.to_path_buf(),
+            hash: content_hash,
+        };
+        self.add_event(event.into());
+        Ok(content)
+    }
+
+    fn get_metadata(&mut self, path: &Path, key: &str) -> anyhow::Result<Option<String>> {
+        let key = MetadataKey::from(key);
+        let v = self.backend.lock().unwrap().get_metadata(path, &key)?;
+        let event = GetMetadataEvent {
+            path: path.to_path_buf(),
+            key: key.clone(),
+            value: v.clone(),
+        };
+        self.add_event(event.into());
+        Ok(v.map(|v| v.as_string()))
+    }
+
+    fn set_metadata(&mut self, path: &Path, key: &str, value: &str) -> anyhow::Result<()> {
+        let key = MetadataKey::from(key);
+        let v = MetadataEntry::from(value);
+        let v = Some(v);
+        let before_value = self.backend.lock().unwrap().set_metadata(path, &key, &v)?;
+        let event = SetMetadataEvent {
+            path: path.to_path_buf(),
+            key,
+            before_value,
+            after_value: v,
+        };
+        self.add_event(event.into());
+        Ok(())
+    }
+
     fn get_event_group(&self) -> Option<EventGroup> {
         if self.event_group.events.is_empty() {
             return None;

@@ -73,17 +73,23 @@ impl EventLog for DummyEventLog {
 
     fn add_event_group(&mut self, group: &EventGroup) -> anyhow::Result<EventGroup> {
         // Create the group.
+        let mut group = group.clone();
+
         self.conn.execute(
             "INSERT INTO Groups (command) VALUES (?1)",
             [group.command.clone()],
         )?;
-        let group_id = self.conn.last_insert_rowid() as u64;
+
+        group.id = self.conn.last_insert_rowid() as u64;
         let mut stmt = self.conn.prepare("INSERT INTO Events (group_id, action_type, file_path, before_hash, after_hash) VALUES(?, ?, ?, ?, ?)")?;
-        for event in &group.events {
-            stmt.execute(self.row_from_event_no_id(&event.with_group_id(group_id)))?;
+
+        for event in &mut group.events {
+            event.group_id = group.id;
+            stmt.execute(self.row_from_event_no_id(event))?;
+            event.id = self.conn.last_insert_rowid() as u64;
         }
-        todo!();
-        // Ok(())
+
+        Ok(group)
     }
 }
 
@@ -175,6 +181,7 @@ impl DummyEventLog {
         let command = row.get("command")?;
         // TODO: Fill in is_most_recent_run somehow?
         Ok(EventGroup {
+            id: row.get("id")?,
             command,
             events: vec![],
             is_most_recent_run: true,
@@ -196,9 +203,27 @@ impl DummyEventLog {
                 e.before_hash.as_ref().map(|h| h.to_string()),
                 e.after_hash.as_ref().map(|h| h.to_string()),
             ),
-            EventType::ReadFile(_) => todo!(),
-            EventType::GetMetadata(_) => todo!(),
-            EventType::SetMetadata(_) => todo!(),
+            EventType::ReadFile(e) => (
+                event.group_id.to_string(),
+                "read".to_string(),
+                e.path.display().to_string(),
+                e.hash.as_ref().map(|h| h.to_string()),
+                None,
+            ),
+            EventType::GetMetadata(e) => (
+                event.group_id.to_string(),
+                "get_md".to_string(),
+                e.path.display().to_string(),
+                None,
+                None,
+            ),
+            EventType::SetMetadata(e) => (
+                event.group_id.to_string(),
+                "set_md".to_string(),
+                e.path.display().to_string(),
+                None,
+                None,
+            ),
         }
     }
 }

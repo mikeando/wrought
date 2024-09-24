@@ -1,4 +1,7 @@
-use std::path::{Path, PathBuf};
+use std::{
+    collections::BTreeMap,
+    path::{Path, PathBuf},
+};
 
 use crate::{
     binary16::ContentHash,
@@ -46,8 +49,20 @@ impl Backend for DummyBackend {
         key: &MetadataKey,
     ) -> anyhow::Result<Option<MetadataEntry>> {
         eprintln!("DummyBackend::get_metadata({:?}, {:?})", path, key);
-        Ok(None)
+        let md_path = self.root.join(".wrought").join("metadata.json");
+        let md_store: BTreeMap<String, BTreeMap<String, String>> = if md_path.is_file() {
+            let s = std::fs::read_to_string(md_path)?;
+            serde_json::from_str(&s)?
+        } else {
+            BTreeMap::new()
+        };
+        let v = md_store
+            .get(&path.display().to_string())
+            .and_then(|c| c.get(&key.as_string()));
+
+        Ok(v.map(|s| MetadataEntry::from(s.as_str())))
     }
+
     fn set_metadata(
         &self,
         path: &Path,
@@ -58,8 +73,42 @@ impl Backend for DummyBackend {
             "DummyBackend::set_metadata({:?}, {:?}, {:?})",
             path, key, value
         );
-        Ok(None)
+        let md_path = self.root.join(".wrought").join("metadata.json");
+        let mut md_store: BTreeMap<String, BTreeMap<String, String>> = if md_path.is_file() {
+            let s = std::fs::read_to_string(&md_path)?;
+            serde_json::from_str(&s)?
+        } else {
+            BTreeMap::new()
+        };
+        let original = md_store
+            .get(&path.display().to_string())
+            .and_then(|m| m.get(&key.as_string()));
+        let original = original.map(|v| MetadataEntry::from(v.as_str()));
+        if let Some(v) = value {
+            md_store
+                .entry(path.display().to_string())
+                .or_default()
+                .insert(key.as_string(), v.as_string());
+        } else {
+            let clean = if let Some(x) = md_store.get_mut(&path.display().to_string()) {
+                x.remove(&key.as_string());
+                x.is_empty()
+            } else {
+                false
+            };
+            if clean {
+                md_store.remove(&path.display().to_string());
+            }
+        }
+        let content = serde_json::to_string_pretty(&md_store)?;
+        std::fs::write(&md_path, content)?;
+        eprintln!(
+            "DONE DummyBackend::set_metadata({:?}, {:?}, {:?}) -> {:?}",
+            path, key, value, original
+        );
+        Ok(original)
     }
+
     fn write_file(
         &self,
         path: &Path,
@@ -77,10 +126,8 @@ impl Backend for DummyBackend {
         let original_hash = if p.is_file() {
             let original_content = std::fs::read(&p);
             match original_content {
-                Ok(original_contetnt) => {
-                    Some(ContentHash::from_content(&original_contetnt))
-                }
-                Err(_) => None
+                Ok(original_contetnt) => Some(ContentHash::from_content(&original_contetnt)),
+                Err(_) => None,
             }
         } else {
             None
@@ -98,7 +145,23 @@ impl Backend for DummyBackend {
     }
 
     fn read_file(&self, path: &Path) -> anyhow::Result<Option<(ContentHash, Vec<u8>)>> {
-        todo!()
+        eprintln!("DummyBackend::read_file({:?})", path);
+        let p = self.root.join(path);
+        // Check if the file exists
+        let original_and_hash = if p.is_file() {
+            let original_content = std::fs::read(&p);
+            match original_content {
+                Ok(original_content) => Some((
+                    ContentHash::from_content(&original_content),
+                    original_content,
+                )),
+                Err(_) => None,
+            }
+        } else {
+            None
+        };
+
+        Ok(original_and_hash)
     }
 }
 
