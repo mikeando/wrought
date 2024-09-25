@@ -284,12 +284,13 @@ fn cmd_init(cmd: &InitCmd) -> anyhow::Result<()> {
 
 #[derive(Debug)]
 struct PackageStatus {
-
+    path: PathBuf,
+    content: String,
 }
 
 impl PackageStatus {
     pub fn read_from(p: &Path) -> anyhow::Result<PackageStatus> {
-        Err(anyhow!("PackageStatus::read({}) not yet implemented", p.display()))
+        Ok( PackageStatus{path: p.to_path_buf(), content: std::fs::read_to_string(p)? } )
     }
 }
 
@@ -331,6 +332,10 @@ impl Package {
         }
         result
     } 
+
+    fn name(&self) -> String {
+        self.path.file_name().unwrap().to_str().unwrap().to_string()
+    }
 }
 
 struct PackageDirectory {
@@ -376,21 +381,34 @@ impl PackageDirectory {
 fn cmd_status(project_root: &Path, _cmd: StatusCmd) -> anyhow::Result<()> {
     let package_dir = PackageDirectory { path: project_root.join(".wrought").join("packages") };
     let packages = package_dir.packages();
-    let package_statuses: Vec<_> = packages.into_iter().flat_map(|package| {
-        let v = match package {
-            Ok(v) => v,
-            Err(e) => return vec![Err(e)],
-        };
-        v.statuses()
-    }).collect();
+    for package in package_dir.packages() {
+         match package {
+            Ok(package) => {
+                println!("{}", package.name());
+                println!("---", );
+                for status in package.statuses() {
+                    match status {
+                        Ok(status) => {
+                            println!("* {}", status.path.file_name().unwrap().to_string_lossy());
 
-    for status in package_statuses {
-        match status {
-            Ok(status) => eprintln!("{:?}", status),
-            Err(e) => eprintln!("ERROR: {:?}", e),
+                            let mut content: Vec<_> = status.content.lines().map(|l| l.trim()).collect();
+                            while let Some(c) = content.last() {
+                                if !c.is_empty() {
+                                    break;
+                                }
+                                content.pop();
+                            }
+                            for line in content {
+                                println!("   | {}", line);
+                            }
+                        },
+                        Err(e) => eprintln!("  * error : {:?}", e),
+                    }
+                }
+            }
+            Err(e) => {println!("- package error: {:?}\n", e)}
         }
     }
-
     Ok(())
 }
 
@@ -452,7 +470,7 @@ fn main() {
             Err(e) => panic!("Error looking for project root: {}", e),
         },
     };
-    eprintln!("Using project root: '{}'", project_root.display());
+    // eprintln!("Using project root: '{}'", project_root.display());
 
     match args.command {
         Command::FileStatus(cmd) => {
