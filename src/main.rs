@@ -4,7 +4,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use anyhow::Context;
+use anyhow::{anyhow,Context};
 use backend::{Backend, DummyBackend};
 use bridge::{Bridge, DummyBridge};
 use clap::{Parser, Subcommand};
@@ -16,6 +16,7 @@ pub mod event_log;
 pub mod events;
 pub mod metadata;
 pub mod scripting_luau;
+pub mod fs_utils;
 
 use binary16::ContentHash;
 use event_log::{DummyEventLog, EventLog};
@@ -254,16 +255,8 @@ fn cmd_init(cmd: &InitCmd) -> anyhow::Result<()> {
     let project_package = project_package_dir.join(&cmd.package);
     fs::create_dir_all(&project_package).unwrap();
 
-    for entry in fs::read_dir(src_package_dir.join(&cmd.package)).unwrap() {
-        let entry = entry.unwrap();
-        let file_type = entry.file_type().unwrap();
+    fs_utils::copy_dir_all_with_filters(src_package_dir.join(&cmd.package), &project_package, |_,_| true, |_,_| true)?;
 
-        // TODO: Handle sub-driectories if we want this to be recursive.
-        if file_type.is_file() {
-            // Copy files
-            fs::copy(entry.path(), project_package.join(entry.file_name())).unwrap();
-        }
-    }
     // Now if there is an init script we should run it.
     println!("Running init scripts");
 
@@ -289,20 +282,113 @@ fn cmd_init(cmd: &InitCmd) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn cmd_status(project_root: &Path, _cmd: StatusCmd) -> anyhow::Result<()> {
-    // For new we assume the project status reports are in .wrought/status
-    for entry in fs::read_dir(project_root.join(".wrought").join("status"))? {
-        let entry = entry?;
-        let md = entry.metadata()?;
-        if !md.is_file() {
-            eprintln!(
-                "status does not support subdirectories: {}",
-                entry.path().display()
-            );
-            continue;
+#[derive(Debug)]
+struct PackageStatus {
+
+}
+
+impl PackageStatus {
+    pub fn read_from(p: &Path) -> anyhow::Result<PackageStatus> {
+        Err(anyhow!("PackageStatus::read({}) not yet implemented", p.display()))
+    }
+}
+
+struct Package {
+    path: PathBuf,
+}
+
+impl Package {
+    fn statuses(&self) -> Vec<anyhow::Result<PackageStatus>> {
+        let status_dir = self.path.join("status");
+        let mut result = vec![];
+        let rd = match fs::read_dir(&status_dir){
+            Ok(rd) => rd,
+            Err(e) => {
+                return vec![ Err(e).with_context(|| format!("reading directory {:?}", status_dir))];
+            },
+        };
+        for entry in rd {
+            let de = match entry {
+                Ok(de) => de,
+                Err(e) => {
+                    result.push(Err(e).with_context(|| format!("getting directory entry from {:?}", status_dir)));
+                    continue;
+                },
+            };
+            let md = match de.metadata() {
+                Ok(md) => md,
+                Err(e) => {
+                    result.push(Err(e).with_context(|| format!("getting metadata for {:?}", de.path())));
+                    continue;
+                },
+            };
+            if (!md.is_file()) {
+                result.push(Err(anyhow!("status entry {:?} is not a file", de.path())));
+                continue;
+            }
+
+            result.push(PackageStatus::read_from(&de.path()));
         }
-        let content = std::fs::read_to_string(entry.path())?;
-        println!("{}", content);
+        result
+    } 
+}
+
+struct PackageDirectory {
+    path: PathBuf,
+}
+
+impl PackageDirectory {
+    fn packages(&self) -> Vec<anyhow::Result<Package>> {
+        let mut result = vec![];
+        let rd = match fs::read_dir(&self.path){
+            Ok(rd) => rd,
+            Err(e) => {
+                return vec![ Err(e).with_context(|| format!("reading directory .wrought/packages"))];
+            },
+        };
+        for entry in rd {
+            let de = match entry {
+                Ok(de) => de,
+                Err(e) => {
+                    result.push(Err(e).with_context(|| format!("getting directory entry")));
+                    continue;
+                },
+            };
+            let md = match de.metadata() {
+                Ok(md) => md,
+                Err(e) => {
+                    result.push(Err(e).with_context(|| format!("getting metadata for {:?}", de.path())));
+                    continue;
+                },
+            };
+            if (!md.is_dir()) {
+                result.push(Err(anyhow!("package directory entry {:?} is not a directory", de.path())));
+                continue;
+            }
+            result.push(Ok(Package{path: de.path()}));
+        }
+        result
+    }
+}
+
+
+
+fn cmd_status(project_root: &Path, _cmd: StatusCmd) -> anyhow::Result<()> {
+    let package_dir = PackageDirectory { path: project_root.join(".wrought").join("packages") };
+    let packages = package_dir.packages();
+    let package_statuses: Vec<_> = packages.into_iter().flat_map(|package| {
+        let v = match package {
+            Ok(v) => v,
+            Err(e) => return vec![Err(e)],
+        };
+        v.statuses()
+    }).collect();
+
+    for status in package_statuses {
+        match status {
+            Ok(status) => eprintln!("{:?}", status),
+            Err(e) => eprintln!("ERROR: {:?}", e),
+        }
     }
 
     Ok(())
