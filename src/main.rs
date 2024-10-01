@@ -12,6 +12,7 @@ use clap::{Parser, Subcommand};
 pub mod backend;
 pub mod binary16;
 pub mod bridge;
+pub mod content_store;
 pub mod event_log;
 pub mod events;
 pub mod fs_utils;
@@ -19,6 +20,7 @@ pub mod metadata;
 pub mod scripting_luau;
 
 use binary16::ContentHash;
+use content_store::DummyContentStore;
 use event_log::{DummyEventLog, EventLog};
 use events::{Event, EventGroup};
 use events::{EventType, GetMetadataEvent, SetMetadataEvent, WriteFileEvent};
@@ -449,8 +451,10 @@ fn cmd_run_script(
 }
 
 pub fn create_backend(path: &Path) -> anyhow::Result<Arc<Mutex<dyn Backend>>> {
+    let content_store = Arc::new(Mutex::new(DummyContentStore {}));
     Ok(Arc::new(Mutex::new(DummyBackend {
         root: path.canonicalize()?,
+        content_store,
     })))
 }
 

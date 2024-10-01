@@ -1,10 +1,12 @@
 use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
+    sync::{Arc, Mutex},
 };
 
 use crate::{
     binary16::ContentHash,
+    content_store::ContentStore,
     metadata::{MetadataEntry, MetadataKey},
 };
 
@@ -40,6 +42,7 @@ pub trait Backend {
 
 pub struct DummyBackend {
     pub root: PathBuf,
+    pub content_store: Arc<Mutex<dyn ContentStore>>,
 }
 
 impl Backend for DummyBackend {
@@ -139,6 +142,8 @@ impl Backend for DummyBackend {
             .ok_or_else(|| anyhow!("Unable to find parent for {}", p.display()))?;
         std::fs::create_dir_all(parent)?;
         std::fs::write(p, value)?;
+
+        self.content_store.lock().unwrap().store(value)?;
 
         // TODO: Need to read the previous content if it exists.
         Ok((original_hash, ContentHash::from_content(value)))
