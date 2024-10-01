@@ -4,7 +4,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use anyhow::{anyhow,Context};
+use anyhow::{anyhow, bail, Context};
 use backend::{Backend, DummyBackend};
 use bridge::{Bridge, DummyBridge};
 use clap::{Parser, Subcommand};
@@ -14,9 +14,9 @@ pub mod binary16;
 pub mod bridge;
 pub mod event_log;
 pub mod events;
+pub mod fs_utils;
 pub mod metadata;
 pub mod scripting_luau;
-pub mod fs_utils;
 
 use binary16::ContentHash;
 use event_log::{DummyEventLog, EventLog};
@@ -255,7 +255,12 @@ fn cmd_init(cmd: &InitCmd) -> anyhow::Result<()> {
     let project_package = project_package_dir.join(&cmd.package);
     fs::create_dir_all(&project_package).unwrap();
 
-    fs_utils::copy_dir_all_with_filters(src_package_dir.join(&cmd.package), &project_package, |_,_| true, |_,_| true)?;
+    fs_utils::copy_dir_all_with_filters(
+        src_package_dir.join(&cmd.package),
+        &project_package,
+        |_, _| true,
+        |_, _| true,
+    )?;
 
     // Now if there is an init script we should run it.
     println!("Running init scripts");
@@ -290,7 +295,10 @@ struct PackageStatus {
 
 impl PackageStatus {
     pub fn read_from(p: &Path) -> anyhow::Result<PackageStatus> {
-        Ok( PackageStatus{path: p.to_path_buf(), content: std::fs::read_to_string(p)? } )
+        Ok(PackageStatus {
+            path: p.to_path_buf(),
+            content: std::fs::read_to_string(p)?,
+        })
     }
 }
 
@@ -302,28 +310,33 @@ impl Package {
     fn statuses(&self) -> Vec<anyhow::Result<PackageStatus>> {
         let status_dir = self.path.join("status");
         let mut result = vec![];
-        let rd = match fs::read_dir(&status_dir){
+        let rd = match fs::read_dir(&status_dir) {
             Ok(rd) => rd,
             Err(e) => {
-                return vec![ Err(e).with_context(|| format!("reading directory {:?}", status_dir))];
-            },
+                return vec![Err(e).with_context(|| format!("reading directory {:?}", status_dir))];
+            }
         };
         for entry in rd {
-            let de = match entry {
-                Ok(de) => de,
-                Err(e) => {
-                    result.push(Err(e).with_context(|| format!("getting directory entry from {:?}", status_dir)));
-                    continue;
-                },
-            };
+            let de =
+                match entry {
+                    Ok(de) => de,
+                    Err(e) => {
+                        result.push(Err(e).with_context(|| {
+                            format!("getting directory entry from {:?}", status_dir)
+                        }));
+                        continue;
+                    }
+                };
             let md = match de.metadata() {
                 Ok(md) => md,
                 Err(e) => {
-                    result.push(Err(e).with_context(|| format!("getting metadata for {:?}", de.path())));
+                    result.push(
+                        Err(e).with_context(|| format!("getting metadata for {:?}", de.path())),
+                    );
                     continue;
-                },
+                }
             };
-            if (!md.is_file()) {
+            if !md.is_file() {
                 result.push(Err(anyhow!("status entry {:?} is not a file", de.path())));
                 continue;
             }
@@ -331,7 +344,7 @@ impl Package {
             result.push(PackageStatus::read_from(&de.path()));
         }
         result
-    } 
+    }
 
     fn name(&self) -> String {
         self.path.file_name().unwrap().to_str().unwrap().to_string()
@@ -345,53 +358,61 @@ struct PackageDirectory {
 impl PackageDirectory {
     fn packages(&self) -> Vec<anyhow::Result<Package>> {
         let mut result = vec![];
-        let rd = match fs::read_dir(&self.path){
+        let rd = match fs::read_dir(&self.path) {
             Ok(rd) => rd,
             Err(e) => {
-                return vec![ Err(e).with_context(|| format!("reading directory .wrought/packages"))];
-            },
+                return vec![
+                    Err(e).with_context(|| "reading directory .wrought/packages".to_string())
+                ];
+            }
         };
         for entry in rd {
             let de = match entry {
                 Ok(de) => de,
                 Err(e) => {
-                    result.push(Err(e).with_context(|| format!("getting directory entry")));
+                    result.push(Err(e).with_context(|| "getting directory entry".to_string()));
                     continue;
-                },
+                }
             };
             let md = match de.metadata() {
                 Ok(md) => md,
                 Err(e) => {
-                    result.push(Err(e).with_context(|| format!("getting metadata for {:?}", de.path())));
+                    result.push(
+                        Err(e).with_context(|| format!("getting metadata for {:?}", de.path())),
+                    );
                     continue;
-                },
+                }
             };
-            if (!md.is_dir()) {
-                result.push(Err(anyhow!("package directory entry {:?} is not a directory", de.path())));
+            if !md.is_dir() {
+                result.push(Err(anyhow!(
+                    "package directory entry {:?} is not a directory",
+                    de.path()
+                )));
                 continue;
             }
-            result.push(Ok(Package{path: de.path()}));
+            result.push(Ok(Package { path: de.path() }));
         }
         result
     }
 }
 
-
-
 fn cmd_status(project_root: &Path, _cmd: StatusCmd) -> anyhow::Result<()> {
-    let package_dir = PackageDirectory { path: project_root.join(".wrought").join("packages") };
+    let package_dir = PackageDirectory {
+        path: project_root.join(".wrought").join("packages"),
+    };
     let packages = package_dir.packages();
-    for package in package_dir.packages() {
-         match package {
+    for package in packages {
+        match package {
             Ok(package) => {
                 println!("{}", package.name());
-                println!("---", );
+                println!("---",);
                 for status in package.statuses() {
                     match status {
                         Ok(status) => {
                             println!("* {}", status.path.file_name().unwrap().to_string_lossy());
 
-                            let mut content: Vec<_> = status.content.lines().map(|l| l.trim()).collect();
+                            let mut content: Vec<_> =
+                                status.content.lines().map(|l| l.trim()).collect();
                             while let Some(c) = content.last() {
                                 if !c.is_empty() {
                                     break;
@@ -401,12 +422,14 @@ fn cmd_status(project_root: &Path, _cmd: StatusCmd) -> anyhow::Result<()> {
                             for line in content {
                                 println!("   | {}", line);
                             }
-                        },
+                        }
                         Err(e) => eprintln!("  * error : {:?}", e),
                     }
                 }
             }
-            Err(e) => {println!("- package error: {:?}\n", e)}
+            Err(e) => {
+                println!("- package error: {:?}\n", e)
+            }
         }
     }
     Ok(())
@@ -446,7 +469,73 @@ pub fn create_bridge(path: &Path) -> anyhow::Result<Arc<Mutex<dyn Bridge>>> {
     })))
 }
 
+fn get_absolute_project_and_relative_file(
+    working_dir: &Path,
+    file_path: &Path,
+    project_root: Option<&Path>,
+) -> anyhow::Result<(PathBuf, PathBuf)> {
+    eprintln!(
+        "get_absolute_project_and_relative_file: working_dir={:?} file_path={:?} project_root={:?}",
+        working_dir, file_path, project_root
+    );
+
+    assert!(working_dir.is_absolute());
+
+    let file_path = if file_path.is_absolute() {
+        file_path.to_path_buf()
+    } else {
+        working_dir.join(file_path)
+    };
+
+    //NOTE: We can't immediately cannonicalise file_path as it may not exits.
+
+    // Now if we've explicitly specified a project_root, use that
+    // and check the file is inside the project root, otherwise search for the project root.
+
+    let project_root = match project_root {
+        Some(p) => {
+            let p = if p.is_absolute() {
+                p.to_path_buf()
+            } else {
+                working_dir.join(p)
+            };
+            if !p.join(".wrought").is_dir() {
+                bail!("specified project root {} has no .wrought subdirectory - it is not a valid root", p.display());
+            }
+            p.canonicalize()?
+        }
+        None => {
+            let parent = find_first_existing_parent(&file_path)?;
+            let parent = parent.with_context(|| {
+                format!(
+                    "Unable to find existing parent directory for {:?}",
+                    file_path
+                )
+            })?;
+            let parent = parent.canonicalize()?;
+            let project_root = find_marker_dir(&parent, ".wrought")?;
+            project_root.with_context(|| {
+                format!("Unable to find wrought root containing {:?}", file_path)
+            })?
+        }
+    };
+    eprintln!("using project_root = {:?}", project_root);
+
+    let relative_file_path = file_path
+        .strip_prefix(&project_root)
+        .with_context(|| {
+            format!(
+                "file '{:?}' not inside project root '{:?}'",
+                file_path, project_root
+            )
+        })?
+        .to_path_buf();
+    Ok((project_root, relative_file_path))
+}
+
 fn main() {
+    let working_dir = std::fs::canonicalize(".").unwrap();
+    eprintln!("working_dir = {:?}", working_dir);
     let args = Cli::parse();
 
     // Have to handle Init differntly as it doesn't care about the project_root already
@@ -456,37 +545,77 @@ fn main() {
         return;
     }
 
-    // Check the project_root exists
-    let project_root = match &args.project_root {
-        Some(p) => {
-            if !p.join(".wrought").is_dir() {
-                panic!("specified project root {} has no .wrought subdirectory - it is not a valid root", p.display());
-            }
-            p.clone()
-        }
-        None => match find_marker_dir(&PathBuf::from("."), ".wrought") {
-            Ok(Some(p)) => p,
-            Ok(None) => panic!("Unable to find project root for current directory"),
-            Err(e) => panic!("Error looking for project root: {}", e),
-        },
-    };
-    // eprintln!("Using project root: '{}'", project_root.display());
-
     match args.command {
         Command::FileStatus(cmd) => {
-            let backend = DummyEventLog::open("wrought.db").unwrap();
-            let status = get_single_file_status(&backend, &cmd.path).unwrap();
+            // resolve the path relative to the project root.
+            let (project_root, file_path) = get_absolute_project_and_relative_file(
+                &working_dir,
+                &cmd.path,
+                args.project_root.as_deref(),
+            )
+            .unwrap();
+
+            let event_log = create_event_log(&project_root).unwrap();
+            let status = get_single_file_status(&project_root, &event_log, &file_path).unwrap();
             print_single_file_status(&status);
         }
         Command::HelloWorld => {
+            // Check the project_root exists
+            let project_root = match &args.project_root {
+                Some(p) => {
+                    if !p.join(".wrought").is_dir() {
+                        panic!("specified project root {} has no .wrought subdirectory - it is not a valid root", p.display());
+                    }
+                    p.clone()
+                }
+                None => match find_marker_dir(&PathBuf::from("."), ".wrought") {
+                    Ok(Some(p)) => p,
+                    Ok(None) => panic!("Unable to find project root for current directory"),
+                    Err(e) => panic!("Error looking for project root: {}", e),
+                },
+            };
+            // eprintln!("Using project root: '{}'", project_root.display());
+
             let backend = create_backend(&project_root).unwrap();
             let mut w = Wrought::new(backend);
             hello_world(&mut w);
         }
         Command::Status(cmd) => {
+            // Check the project_root exists
+            let project_root = match &args.project_root {
+                Some(p) => {
+                    if !p.join(".wrought").is_dir() {
+                        panic!("specified project root {} has no .wrought subdirectory - it is not a valid root", p.display());
+                    }
+                    p.clone()
+                }
+                None => match find_marker_dir(&PathBuf::from("."), ".wrought") {
+                    Ok(Some(p)) => p,
+                    Ok(None) => panic!("Unable to find project root for current directory"),
+                    Err(e) => panic!("Error looking for project root: {}", e),
+                },
+            };
+            // eprintln!("Using project root: '{}'", project_root.display());
+
             cmd_status(&project_root, cmd).unwrap();
         }
         Command::RunScript(cmd) => {
+            // Check the project_root exists
+            let project_root = match &args.project_root {
+                Some(p) => {
+                    if !p.join(".wrought").is_dir() {
+                        panic!("specified project root {} has no .wrought subdirectory - it is not a valid root", p.display());
+                    }
+                    p.clone()
+                }
+                None => match find_marker_dir(&PathBuf::from("."), ".wrought") {
+                    Ok(Some(p)) => p,
+                    Ok(None) => panic!("Unable to find project root for current directory"),
+                    Err(e) => panic!("Error looking for project root: {}", e),
+                },
+            };
+            // eprintln!("Using project root: '{}'", project_root.display());
+
             let bridge = create_bridge(&project_root).unwrap();
             cmd_run_script(bridge.clone(), &project_root, cmd).unwrap();
             let event_log = create_event_log(&project_root).unwrap();
@@ -570,10 +699,13 @@ impl TrackedFileStatus {
     }
 }
 
-pub fn get_single_file_status<L: EventLog>(
-    event_log: &L,
+pub fn get_single_file_status(
+    project_root: &Path,
+    event_log: &Arc<Mutex<dyn EventLog>>,
     p: &Path,
 ) -> anyhow::Result<SingleFileStatusResult> {
+    let event_log = event_log.lock().unwrap();
+
     // To get the file status we need to know the last write to it - which should return a hash
     // and the change-set-id that it was last changed in.
     // We can then compare the hash of the file with that in the change-set to determine if it has changed,
@@ -592,7 +724,8 @@ pub fn get_single_file_status<L: EventLog>(
         unreachable!("get_last_write_event returned a non WriteFile event!");
     };
 
-    let current_hash = calculate_file_hash(p)?;
+    let current_hash = calculate_file_hash(&project_root.join(p))?;
+    eprintln!("Getting file hash for {:?} = {:?}", p, current_hash);
 
     let Some(event_group) = event_log.get_event_group(event.group_id)? else {
         unreachable!("get_last_write_event returned an event with invalid group_id");
@@ -603,7 +736,7 @@ pub fn get_single_file_status<L: EventLog>(
         match &e.event_type {
             EventType::ReadFile(read_file_event) => {
                 let path = read_file_event.path.clone();
-                let current_hash = calculate_file_hash(&path)?;
+                let current_hash = calculate_file_hash(&project_root.join(&path))?;
                 inputs.push(TrackedFileInput {
                     path,
                     tracked_hash: read_file_event.hash.clone(),
