@@ -28,6 +28,7 @@ use events::{EventType, GetMetadataEvent, SetMetadataEvent, WriteFileEvent};
 use metadata::MetadataEntry;
 use metadata::MetadataKey;
 use scripting_luau::run_script;
+use xfs::Xfs;
 
 pub struct Wrought {
     backend: Arc<Mutex<dyn Backend>>,
@@ -451,7 +452,9 @@ fn cmd_run_script(
 }
 
 pub fn create_backend(path: &Path) -> anyhow::Result<Arc<Mutex<dyn Backend>>> {
-    let content_store = Arc::new(Mutex::new(DummyContentStore {}));
+    let content_storage_path = path.join("_content");
+    let fs = Arc::new(Mutex::new(xfs::OsFs {}));
+    let content_store = Arc::new(Mutex::new(DummyContentStore::new(fs, content_storage_path)));
     Ok(Arc::new(Mutex::new(DummyBackend {
         root: path.canonicalize()?,
         content_store,
