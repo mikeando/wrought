@@ -98,7 +98,11 @@ where
     Ok(())
 }
 
-pub fn run_script(bridge: Arc<Mutex<dyn Bridge>>, script_path: &Path) -> anyhow::Result<()> {
+pub fn run_script(
+    bridge: Arc<Mutex<dyn Bridge>>,
+    fs: Arc<Mutex<dyn xfs::Xfs>>,
+    script_path: &Path,
+) -> anyhow::Result<()> {
     let lua = Lua::new();
 
     lua.sandbox(true)?;
@@ -112,7 +116,269 @@ pub fn run_script(bridge: Arc<Mutex<dyn Bridge>>, script_path: &Path) -> anyhow:
     add_bridge_function(&bridge, &lua, "set_metadata", lua_set_metadata)?;
     add_bridge_function(&bridge, &lua, "get_metadata", lua_get_metadata)?;
 
-    let script = std::fs::read_to_string(script_path)?;
+    let mut script = String::new();
+    fs.lock()
+        .unwrap()
+        .reader(script_path)?
+        .read_to_string(&mut script)?;
+
     lua.load(script).exec()?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use anyhow::anyhow;
+    use std::sync::{Arc, Mutex};
+
+    pub struct MockBridge {
+        write_calls: Vec<(PathBuf, Vec<u8>, anyhow::Result<()>)>,
+        read_calls: Vec<(PathBuf, anyhow::Result<Option<Vec<u8>>>)>,
+        errors: Vec<String>,
+    }
+
+    impl MockBridge {
+        pub fn new() -> MockBridge {
+            MockBridge {
+                write_calls: vec![],
+                read_calls: vec![],
+                errors: vec![],
+            }
+        }
+
+        pub fn expect_write_file<P: Into<PathBuf>>(
+            &mut self,
+            path: P,
+            value: &[u8],
+            result: anyhow::Result<()>,
+        ) {
+            self.write_calls.push((path.into(), value.to_vec(), result))
+        }
+
+        pub fn expect_read_file<P: Into<PathBuf>>(
+            &mut self,
+            path: P,
+            result: anyhow::Result<Option<Vec<u8>>>,
+        ) {
+            self.read_calls.push((path.into(), result))
+        }
+
+        pub fn check(&self) {
+            assert!(self.write_calls.is_empty());
+            if !self.errors.is_empty() {
+                panic!("Unexpected errors in mock: {:?}", self.errors);
+            }
+        }
+    }
+
+    impl Bridge for MockBridge {
+        fn write_file(&mut self, path: &Path, value: &[u8]) -> anyhow::Result<()> {
+            // Impolite to panic inside luau, so instead we error and add a failure message to the mock.
+            let Some(expected) = self.write_calls.pop() else {
+                self.errors
+                    .push(format!("Call to write_file when expected calls is empty"));
+                return Err(anyhow!("Call to write_file when expected calls is empty"));
+            };
+            if path != expected.0 || value != expected.1 {
+                self.errors
+                    .push(format!("Call to write_file does not match expected"));
+                return Err(anyhow!("Call to write_file does not match expected"));
+            }
+            expected.2
+        }
+
+        fn read_file(&mut self, path: &Path) -> anyhow::Result<Option<Vec<u8>>> {
+            // Impolite to panic inside luau, so instead we error and add a failure message to the mock.
+            let Some(expected) = self.read_calls.pop() else {
+                self.errors
+                    .push(format!("Call to read_file when expected calls is empty"));
+                return Err(anyhow!("Call to read_file when expected calls is empty"));
+            };
+            if path != expected.0 {
+                self.errors
+                    .push(format!("Call to read_file does not match expected"));
+                return Err(anyhow!("Call to read_file does not match expected"));
+            }
+            expected.1
+        }
+
+        fn get_metadata(&mut self, path: &Path, key: &str) -> anyhow::Result<Option<String>> {
+            todo!()
+        }
+
+        fn set_metadata(&mut self, path: &Path, key: &str, value: &str) -> anyhow::Result<()> {
+            todo!()
+        }
+
+        fn get_event_group(&self) -> Option<crate::events::EventGroup> {
+            todo!()
+        }
+    }
+
+    #[test]
+    pub fn can_report_lua_errors() {
+        // i.e. do we get a sensible result back from a lua script calling error?
+        // see https://www.lua.org/pil/8.3.html
+        todo!();
+    }
+
+    #[test]
+    pub fn can_lua_handle_bridge_errors() {
+        // i.e. can a script use pcall style stuff to avoid crashing when an bridge function returns an error.
+        //      though really they shouldn't in most cases, they instead return None - but maybe they will error
+        //      in future if you try to access a path outside the project or a protected resourse or something like that?
+        // see https://www.lua.org/pil/8.4.html
+        todo!();
+    }
+
+    #[test]
+    pub fn run_script_write_file() {
+        let mut fs = xfs::mockfs::MockFS::new();
+
+        fs.add_r(
+            &PathBuf::from("somedir/script.luau"),
+            br#"write_file("someplace/foo.txt", "some content")"#.to_vec(),
+        )
+        .unwrap();
+
+        let mut mock_bridge = MockBridge::new();
+        mock_bridge.expect_write_file("someplace/foo.txt", b"some content", Ok(()));
+
+        let mock_bridge = Arc::new(Mutex::new(mock_bridge));
+        let fs = Arc::new(Mutex::new(fs));
+
+        run_script(
+            mock_bridge.clone(),
+            fs,
+            &PathBuf::from("somedir/script.luau"),
+        )
+        .unwrap();
+
+        mock_bridge.lock().unwrap().check();
+    }
+
+    #[test]
+    pub fn run_script_write_file_invalid() {
+        let mut fs = xfs::mockfs::MockFS::new();
+
+        fs.add_r(
+            &PathBuf::from("somedir/script.luau"),
+            br#"write_file("someplace/foo.txt", "some content")"#.to_vec(),
+        )
+        .unwrap();
+
+        let mut mock_bridge = MockBridge::new();
+        mock_bridge.expect_write_file(
+            "someplace/foo.txt",
+            b"some content",
+            Err(anyhow!("Write Failure")),
+        );
+
+        let mock_bridge = Arc::new(Mutex::new(mock_bridge));
+        let fs = Arc::new(Mutex::new(fs));
+
+        let result = run_script(
+            mock_bridge.clone(),
+            fs,
+            &PathBuf::from("somedir/script.luau"),
+        );
+        assert!(result.is_err());
+
+        mock_bridge.lock().unwrap().check();
+    }
+
+    #[test]
+    pub fn run_script_read_file() {
+        let mut fs = xfs::mockfs::MockFS::new();
+
+        fs.add_r(
+            &PathBuf::from("somedir/script.luau"),
+            br#"content = read_file("someplace/foo.txt")"#.to_vec(),
+        )
+        .unwrap();
+
+        let mut mock_bridge = MockBridge::new();
+        mock_bridge.expect_read_file("someplace/foo.txt", Ok(Some(b"some content".to_vec())));
+
+        let mock_bridge = Arc::new(Mutex::new(mock_bridge));
+        let fs = Arc::new(Mutex::new(fs));
+
+        run_script(
+            mock_bridge.clone(),
+            fs,
+            &PathBuf::from("somedir/script.luau"),
+        )
+        .unwrap();
+
+        // TODO: We should install a lua function so the content can be reported back to rust, so
+        //       we can be sure that lua is seeing the same values as we expect.
+        //       then the function would just get an extra line like `report_to_tests(content)`
+        //       Tricky bit about this is working out how to hook it up to `run_script`
+        //
+
+        mock_bridge.lock().unwrap().check();
+    }
+
+    #[test]
+    pub fn run_script_read_empty() {
+        let mut fs = xfs::mockfs::MockFS::new();
+
+        fs.add_r(
+            &PathBuf::from("somedir/script.luau"),
+            br#"content = read_file("someplace/foo.txt")"#.to_vec(),
+        )
+        .unwrap();
+
+        let mut mock_bridge = MockBridge::new();
+        mock_bridge.expect_read_file("someplace/foo.txt", Ok(None));
+
+        let mock_bridge = Arc::new(Mutex::new(mock_bridge));
+        let fs = Arc::new(Mutex::new(fs));
+
+        run_script(
+            mock_bridge.clone(),
+            fs,
+            &PathBuf::from("somedir/script.luau"),
+        )
+        .unwrap();
+
+        mock_bridge.lock().unwrap().check();
+    }
+
+    #[test]
+    pub fn run_script_read_error() {
+        let mut fs = xfs::mockfs::MockFS::new();
+
+        fs.add_r(
+            &PathBuf::from("somedir/script.luau"),
+            br#"content = read_file("someplace/foo.txt")"#.to_vec(),
+        )
+        .unwrap();
+
+        let mut mock_bridge = MockBridge::new();
+        mock_bridge.expect_read_file("someplace/foo.txt", Err(anyhow!("Read Failure")));
+
+        let mock_bridge = Arc::new(Mutex::new(mock_bridge));
+        let fs = Arc::new(Mutex::new(fs));
+
+        let result = run_script(
+            mock_bridge.clone(),
+            fs,
+            &PathBuf::from("somedir/script.luau"),
+        );
+        assert!(result.is_err());
+
+        mock_bridge.lock().unwrap().check();
+    }
+
+    #[test]
+    pub fn run_script_set_metadata() {
+        todo!();
+    }
+
+    #[test]
+    pub fn run_script_get_metadata() {
+        todo!();
+    }
 }

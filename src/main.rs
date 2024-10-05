@@ -226,6 +226,7 @@ fn find_marker_dir(starting_dir: &Path, marker: &str) -> anyhow::Result<Option<P
 }
 
 fn cmd_init(cmd: &InitCmd) -> anyhow::Result<()> {
+    let fs = Arc::new(Mutex::new(xfs::OsFs {}));
     let path = &cmd.path;
 
     // Check the target is not already in a project.
@@ -271,7 +272,7 @@ fn cmd_init(cmd: &InitCmd) -> anyhow::Result<()> {
     let bridge = create_bridge(path)?;
 
     if project_package.join("init.luau").is_file() {
-        run_script(bridge.clone(), &project_package.join("init.luau"))?;
+        run_script(bridge.clone(), fs, &project_package.join("init.luau"))?;
         // TODO: Does this belong in the bridge?
         let event_log = create_event_log(path).unwrap();
         if let Some(event_group) = bridge.lock().unwrap().get_event_group() {
@@ -443,11 +444,12 @@ fn cmd_run_script(
     project_root: &Path,
     cmd: RunScriptCmd,
 ) -> anyhow::Result<()> {
+    let fs = Arc::new(Mutex::new(xfs::OsFs {}));
     let script_path = project_root
         .join(".wrought")
         .join("packages")
         .join(cmd.script_name);
-    run_script(bridge, &script_path)?;
+    run_script(bridge, fs, &script_path)?;
     Ok(())
 }
 

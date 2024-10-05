@@ -20,5 +20,11 @@ However we also use creation of sqlite db - so we need to be careful about that 
 * [ ] Audit of uses of std::fs
 * [ ] Plan for working with sqlite db in a non-fs way.
 * [ ] Completed all components (add as part of Audit)
-  * [X] ContentStore
+  * [X] component_store.rs
+  * [ ] event_log.rs
+  * [ ] backend.rs
+  * [ ] main.rs
+  * [X] scripting_luau.rs
+    * Added some tests using xfs , and some failing stub tests 
+
 
