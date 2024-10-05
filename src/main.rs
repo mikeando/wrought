@@ -247,6 +247,9 @@ fn cmd_init(cmd: &InitCmd) -> anyhow::Result<()> {
         );
     }
 
+    let content_dir = path.join("_content");
+    fs::create_dir_all(content_dir).unwrap();
+
     // TODO: Make this configurable.
     let src_package_dir = PathBuf::from("./resources/packages/");
     let project_package_dir = path.join(".wrought").join("packages");
