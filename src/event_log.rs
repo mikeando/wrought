@@ -1,5 +1,7 @@
 use std::path::{Path, PathBuf};
 
+use anyhow::bail;
+
 use crate::{
     binary16::ContentHash,
     events::{Event, EventGroup, EventType, ReadFileEvent, WriteFileEvent},
@@ -96,7 +98,9 @@ impl EventLog for DummyEventLog {
 impl DummyEventLog {
     pub fn init<P: AsRef<Path>>(path: P) -> anyhow::Result<()> {
         // For now we swallow errors if we cant remove the file.
-        _ = std::fs::remove_file(&path);
+        if path.as_ref().exists() {
+            bail!("event db file '{}' already exists", path.as_ref().display());
+        }
         let conn = rusqlite::Connection::open(path)?;
 
         conn.execute(

@@ -456,8 +456,9 @@ fn cmd_run_script(
 pub fn create_backend(path: &Path) -> anyhow::Result<Arc<Mutex<dyn Backend>>> {
     let content_storage_path = path.join("_content");
     let fs = Arc::new(Mutex::new(xfs::OsFs {}));
-    let content_store = Arc::new(Mutex::new(DummyContentStore::new(fs, content_storage_path)));
+    let content_store = Arc::new(Mutex::new(DummyContentStore::new(fs.clone(), content_storage_path)));
     Ok(Arc::new(Mutex::new(DummyBackend {
+        fs: fs,
         root: path.canonicalize()?,
         content_store,
     })))

@@ -41,6 +41,7 @@ pub trait Backend {
 // -----------------
 
 pub struct DummyBackend {
+    pub fs: Arc<Mutex<dyn xfs::Xfs>>,
     pub root: PathBuf,
     pub content_store: Arc<Mutex<dyn ContentStore>>,
 }
@@ -53,11 +54,11 @@ impl Backend for DummyBackend {
     ) -> anyhow::Result<Option<MetadataEntry>> {
         eprintln!("DummyBackend::get_metadata({:?}, {:?})", path, key);
         let md_path = self.root.join(".wrought").join("metadata.json");
-        let md_store: BTreeMap<String, BTreeMap<String, String>> = if md_path.is_file() {
-            let s = std::fs::read_to_string(md_path)?;
-            serde_json::from_str(&s)?
-        } else {
-            BTreeMap::new()
+        let md_store: BTreeMap<String, BTreeMap<String, String>> = match self.fs.lock().unwrap().reader_if_exists(&md_path)? {
+            Some(reader) => {
+                serde_json::from_reader(reader)?
+            }
+            None => BTreeMap::new(),
         };
         let v = md_store
             .get(&path.display().to_string())
@@ -77,11 +78,11 @@ impl Backend for DummyBackend {
             path, key, value
         );
         let md_path = self.root.join(".wrought").join("metadata.json");
-        let mut md_store: BTreeMap<String, BTreeMap<String, String>> = if md_path.is_file() {
-            let s = std::fs::read_to_string(&md_path)?;
-            serde_json::from_str(&s)?
-        } else {
-            BTreeMap::new()
+        let mut md_store: BTreeMap<String, BTreeMap<String, String>> = match self.fs.lock().unwrap().reader_if_exists(&md_path)? {
+            Some(reader) => {
+                serde_json::from_reader(reader)?
+            }
+            None => BTreeMap::new(),
         };
         let original = md_store
             .get(&path.display().to_string())
@@ -103,8 +104,9 @@ impl Backend for DummyBackend {
                 md_store.remove(&path.display().to_string());
             }
         }
-        let content = serde_json::to_string_pretty(&md_store)?;
-        std::fs::write(&md_path, content)?;
+        
+        let writer = self.fs.lock().unwrap().writer(&md_path)?;
+        serde_json::to_writer_pretty(writer, &md_store)?;
         eprintln!(
             "DONE DummyBackend::set_metadata({:?}, {:?}, {:?}) -> {:?}",
             path, key, value, original
@@ -126,22 +128,21 @@ impl Backend for DummyBackend {
         let p = self.root.join(path);
 
         // Check if the file exists
-        let original_hash = if p.is_file() {
-            let original_content = std::fs::read(&p);
-            match original_content {
-                Ok(original_contetnt) => Some(ContentHash::from_content(&original_contetnt)),
-                Err(_) => None,
+        let original_hash =match self.fs.lock().unwrap().reader_if_exists(&p)? {
+            Some(mut reader) => {
+                let mut content = vec![];
+                reader.read_to_end(&mut content)?;
+                Some(ContentHash::from_content(&content))
             }
-        } else {
-            None
+            None => None,
         };
 
         // TODO: This should check p and parent are within the root.
         let parent = p
             .parent()
             .ok_or_else(|| anyhow!("Unable to find parent for {}", p.display()))?;
-        std::fs::create_dir_all(parent)?;
-        std::fs::write(p, value)?;
+        self.fs.lock().unwrap().create_dir_all(parent)?;
+        self.fs.lock().unwrap().writer(&p)?.write_all(value)?;
 
         self.content_store.lock().unwrap().store(value)?;
 
@@ -153,17 +154,16 @@ impl Backend for DummyBackend {
         eprintln!("DummyBackend::read_file({:?})", path);
         let p = self.root.join(path);
         // Check if the file exists
-        let original_and_hash = if p.is_file() {
-            let original_content = std::fs::read(&p);
-            match original_content {
-                Ok(original_content) => Some((
-                    ContentHash::from_content(&original_content),
-                    original_content,
-                )),
-                Err(_) => None,
-            }
-        } else {
-            None
+        let original_and_hash = match self.fs.lock().unwrap().reader_if_exists(&p)? {
+            Some(mut reader) => {
+                let mut content = vec![];
+                reader.read_to_end(&mut content)?;
+                Some((
+                    ContentHash::from_content(&content),
+                    content
+                ))
+            },
+            None => None,
         };
 
         Ok(original_and_hash)
