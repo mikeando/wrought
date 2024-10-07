@@ -17,19 +17,28 @@ However we also use creation of sqlite db - so we need to be careful about that 
 
 ## Issue log
 
-* [ ] Audit of uses of std::fs
-* [ ] Plan for working with sqlite db in a non-fs way.
-* [ ] Completed all components (add as part of Audit)
+* [X] Audit of uses of std::fs
+* [?] Plan for working with sqlite db in a non-fs way.
+* [X] Completed all components (add as part of Audit) to no longer use std::fs
   * [X] component_store.rs
-  * [?] event_log.rs
-  * [ ] backend.rs
-  * [ ] main.rs
+  * [X] event_log.rs
+  * [X] backend.rs
+  * [X] main.rs
   * [X] scripting_luau.rs
     * Added some tests using xfs , and some failing stub tests 
+* [X] Convert xfs to handle .canonicalize
+* [X] use fs.canonicalize instead of path.canonicalize or std::fs::canonicalize
+
 
 
 * It is possible to hit the filesystem _without_ using std::fs - 
-  * In particular std::Path and std::PathBuf contain functions like `exists` etc.
-  * Also is_file and is_dir
+  * [X] In particular std::Path and std::PathBuf contain functions like `exists` etc.
+  * [X] Also is_file and is_dir
+  * [X] Also canonicalize
 
+* [X] UGH - some points have things like the following which make it hard to see replacement points.
+  ```
+  use std::{fs, io};
+  ```
 
+* For now we'll leave solving the sqlite event_log for later.

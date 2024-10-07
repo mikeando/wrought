@@ -107,6 +107,12 @@ impl ContentHash {
         let digest = Sha256::digest(content);
         ContentHash::from_raw(digest.as_slice()[0..16].try_into().unwrap())
     }
+
+    pub(crate) fn from_reader(reader: &mut dyn std::io::Read) -> anyhow::Result<ContentHash> {
+        let mut content = vec![];
+        reader.read_to_end(&mut content)?;
+        Ok(ContentHash::from_content(&content))
+    }
 }
 
 impl Display for ContentHash {

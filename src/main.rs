@@ -1,5 +1,4 @@
 use std::{
-    fs,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
 };
@@ -191,11 +190,14 @@ struct RunScriptCmd {
     script_name: String,
 }
 
-fn find_first_existing_parent(starting_dir: &Path) -> anyhow::Result<Option<PathBuf>> {
+fn find_first_existing_parent(
+    fs: &dyn xfs::Xfs,
+    starting_dir: &Path,
+) -> anyhow::Result<Option<PathBuf>> {
     let mut current_dir = starting_dir;
 
     loop {
-        if current_dir.exists() {
+        if fs.exists(current_dir) {
             return Ok(Some(current_dir.to_path_buf()));
         }
 
@@ -207,13 +209,17 @@ fn find_first_existing_parent(starting_dir: &Path) -> anyhow::Result<Option<Path
     }
 }
 
-fn find_marker_dir(starting_dir: &Path, marker: &str) -> anyhow::Result<Option<PathBuf>> {
-    let starting_dir = starting_dir.canonicalize()?;
+fn find_marker_dir(
+    fs: &dyn xfs::Xfs,
+    starting_dir: &Path,
+    marker: &str,
+) -> anyhow::Result<Option<PathBuf>> {
+    let starting_dir = fs.canonicalize(starting_dir)?;
     let mut current_dir: &Path = &starting_dir;
 
     loop {
         let marker_path = current_dir.join(marker);
-        if marker_path.is_dir() {
+        if fs.is_dir(&marker_path) {
             return Ok(Some(current_dir.to_path_buf()));
         }
 
@@ -231,12 +237,13 @@ fn cmd_init(cmd: &InitCmd) -> anyhow::Result<()> {
 
     // Check the target is not already in a project.
     let check = || -> anyhow::Result<Option<PathBuf>> {
-        let existing_parent =
-            find_first_existing_parent(path).context("in find_first_existing_parent")?;
+        let existing_parent = find_first_existing_parent(&*fs.lock().unwrap(), path)
+            .context("in find_first_existing_parent")?;
         let Some(existing_parent) = existing_parent else {
             return Ok(None);
         };
-        find_marker_dir(&existing_parent, ".wrought").context("in find_marker_dir")
+        find_marker_dir(&*fs.lock().unwrap(), &existing_parent, ".wrought")
+            .context("in find_marker_dir")
     };
 
     if let Some(parent_path) = check().unwrap() {
@@ -248,21 +255,28 @@ fn cmd_init(cmd: &InitCmd) -> anyhow::Result<()> {
     }
 
     let content_dir = path.join("_content");
-    fs::create_dir_all(content_dir).unwrap();
+    fs.lock().unwrap().create_dir_all(&content_dir).unwrap();
 
     // TODO: Make this configurable.
     let src_package_dir = PathBuf::from("./resources/packages/");
     let project_package_dir = path.join(".wrought").join("packages");
 
-    fs::create_dir_all(path).unwrap();
-    fs::create_dir_all(path.join(".wrought")).unwrap();
+    fs.lock().unwrap().create_dir_all(path).unwrap();
+    fs.lock()
+        .unwrap()
+        .create_dir_all(&path.join(".wrought"))
+        .unwrap();
     DummyEventLog::init(path.join(".wrought").join("wrought.db")).unwrap();
-    fs::create_dir_all(&project_package_dir).unwrap();
+    fs.lock()
+        .unwrap()
+        .create_dir_all(&project_package_dir)
+        .unwrap();
 
     let project_package = project_package_dir.join(&cmd.package);
-    fs::create_dir_all(&project_package).unwrap();
+    fs.lock().unwrap().create_dir_all(&project_package).unwrap();
 
     fs_utils::copy_dir_all_with_filters(
+        &mut *fs.lock().unwrap(),
         src_package_dir.join(&cmd.package),
         &project_package,
         |_, _| true,
@@ -301,10 +315,12 @@ struct PackageStatus {
 }
 
 impl PackageStatus {
-    pub fn read_from(p: &Path) -> anyhow::Result<PackageStatus> {
+    pub fn read_from(fs: &dyn xfs::Xfs, p: &Path) -> anyhow::Result<PackageStatus> {
+        let mut content = String::new();
+        fs.reader(p)?.read_to_string(&mut content)?;
         Ok(PackageStatus {
             path: p.to_path_buf(),
-            content: std::fs::read_to_string(p)?,
+            content,
         })
     }
 }
@@ -314,41 +330,36 @@ struct Package {
 }
 
 impl Package {
-    fn statuses(&self) -> Vec<anyhow::Result<PackageStatus>> {
+    fn statuses(&self, fs: &dyn xfs::Xfs) -> Vec<anyhow::Result<PackageStatus>> {
         let status_dir = self.path.join("status");
         let mut result = vec![];
-        let rd = match fs::read_dir(&status_dir) {
-            Ok(rd) => rd,
-            Err(e) => {
-                return vec![Err(e).with_context(|| format!("reading directory {:?}", status_dir))];
-            }
-        };
-        for entry in rd {
-            let de =
-                match entry {
-                    Ok(de) => de,
-                    Err(e) => {
-                        result.push(Err(e).with_context(|| {
-                            format!("getting directory entry from {:?}", status_dir)
-                        }));
-                        continue;
-                    }
-                };
-            let md = match de.metadata() {
+
+        let mut f = |fs: &dyn Xfs, entry: &dyn xfs::XfsDirEntry| -> anyhow::Result<()> {
+            let md = match entry.metadata() {
                 Ok(md) => md,
                 Err(e) => {
                     result.push(
-                        Err(e).with_context(|| format!("getting metadata for {:?}", de.path())),
+                        Err(e).with_context(|| format!("getting metadata for {:?}", entry.path())),
                     );
-                    continue;
+                    return Ok(());
                 }
             };
             if !md.is_file() {
-                result.push(Err(anyhow!("status entry {:?} is not a file", de.path())));
-                continue;
+                result.push(Err(anyhow!(
+                    "status entry {:?} is not a file",
+                    entry.path()
+                )));
+                return Ok(());
             }
 
-            result.push(PackageStatus::read_from(&de.path()));
+            result.push(PackageStatus::read_from(fs, &entry.path()));
+            Ok(())
+        };
+
+        if let Err(e) = fs.on_each_entry(&status_dir, &mut f) {
+            result.push(
+                Err(e).with_context(|| format!("while reading statuses from {:?}", status_dir)),
+            );
         }
         result
     }
@@ -363,57 +374,52 @@ struct PackageDirectory {
 }
 
 impl PackageDirectory {
-    fn packages(&self) -> Vec<anyhow::Result<Package>> {
+    fn packages(&self, fs: &dyn xfs::Xfs) -> Vec<anyhow::Result<Package>> {
         let mut result = vec![];
-        let rd = match fs::read_dir(&self.path) {
-            Ok(rd) => rd,
-            Err(e) => {
-                return vec![
-                    Err(e).with_context(|| "reading directory .wrought/packages".to_string())
-                ];
-            }
-        };
-        for entry in rd {
-            let de = match entry {
-                Ok(de) => de,
-                Err(e) => {
-                    result.push(Err(e).with_context(|| "getting directory entry".to_string()));
-                    continue;
-                }
-            };
-            let md = match de.metadata() {
-                Ok(md) => md,
+
+        let mut f = |fs: &dyn Xfs, entry: &dyn xfs::XfsDirEntry| -> anyhow::Result<()> {
+            let md = match entry.metadata() {
                 Err(e) => {
                     result.push(
-                        Err(e).with_context(|| format!("getting metadata for {:?}", de.path())),
+                        Err(e).with_context(|| format!("getting metadata for {:?}", entry.path())),
                     );
-                    continue;
+                    return Ok(());
                 }
+                Ok(md) => md,
             };
             if !md.is_dir() {
                 result.push(Err(anyhow!(
                     "package directory entry {:?} is not a directory",
-                    de.path()
+                    entry.path()
                 )));
-                continue;
+                return Ok(());
             }
-            result.push(Ok(Package { path: de.path() }));
+            result.push(Ok(Package { path: entry.path() }));
+            Ok(())
+        };
+
+        if let Err(e) = fs.on_each_entry(&self.path, &mut f) {
+            result.push(
+                Err(e).with_context(|| format!("while reading packages from {:?}", self.path)),
+            );
         }
         result
     }
 }
 
 fn cmd_status(project_root: &Path, _cmd: StatusCmd) -> anyhow::Result<()> {
+    let fs = Arc::new(Mutex::new(xfs::OsFs {}));
+
     let package_dir = PackageDirectory {
         path: project_root.join(".wrought").join("packages"),
     };
-    let packages = package_dir.packages();
+    let packages = package_dir.packages(&*fs.lock().unwrap());
     for package in packages {
         match package {
             Ok(package) => {
                 println!("{}", package.name());
                 println!("---",);
-                for status in package.statuses() {
+                for status in package.statuses(&*fs.lock().unwrap()) {
                     match status {
                         Ok(status) => {
                             println!("* {}", status.path.file_name().unwrap().to_string_lossy());
@@ -457,12 +463,16 @@ fn cmd_run_script(
 }
 
 pub fn create_backend(path: &Path) -> anyhow::Result<Arc<Mutex<dyn Backend>>> {
-    let content_storage_path = path.join("_content");
     let fs = Arc::new(Mutex::new(xfs::OsFs {}));
-    let content_store = Arc::new(Mutex::new(DummyContentStore::new(fs.clone(), content_storage_path)));
+    let path = fs.lock().unwrap().canonicalize(path)?;
+    let content_storage_path = path.join("_content");
+    let content_store = Arc::new(Mutex::new(DummyContentStore::new(
+        fs.clone(),
+        content_storage_path,
+    )));
     Ok(Arc::new(Mutex::new(DummyBackend {
         fs: fs,
-        root: path.canonicalize()?,
+        root: path,
         content_store,
     })))
 }
@@ -474,15 +484,18 @@ pub fn create_event_log(path: &Path) -> anyhow::Result<Arc<Mutex<dyn EventLog>>>
 }
 
 pub fn create_bridge(path: &Path) -> anyhow::Result<Arc<Mutex<dyn Bridge>>> {
+    let fs = Arc::new(Mutex::new(xfs::OsFs {}));
+    let root = fs.lock().unwrap().canonicalize(path)?;
     let backend = create_backend(path)?;
     Ok(Arc::new(Mutex::new(DummyBridge {
-        root: path.canonicalize()?,
+        root,
         backend,
         event_group: EventGroup::empty(),
     })))
 }
 
 fn get_absolute_project_and_relative_file(
+    fs: &dyn xfs::Xfs,
     working_dir: &Path,
     file_path: &Path,
     project_root: Option<&Path>,
@@ -512,21 +525,21 @@ fn get_absolute_project_and_relative_file(
             } else {
                 working_dir.join(p)
             };
-            if !p.join(".wrought").is_dir() {
+            if !fs.is_dir(&p.join(".wrought")) {
                 bail!("specified project root {} has no .wrought subdirectory - it is not a valid root", p.display());
             }
-            p.canonicalize()?
+            fs.canonicalize(&p)?
         }
         None => {
-            let parent = find_first_existing_parent(&file_path)?;
+            let parent = find_first_existing_parent(fs, &file_path)?;
             let parent = parent.with_context(|| {
                 format!(
                     "Unable to find existing parent directory for {:?}",
                     file_path
                 )
             })?;
-            let parent = parent.canonicalize()?;
-            let project_root = find_marker_dir(&parent, ".wrought")?;
+            let parent = fs.canonicalize(&parent)?;
+            let project_root = find_marker_dir(fs, &parent, ".wrought")?;
             project_root.with_context(|| {
                 format!("Unable to find wrought root containing {:?}", file_path)
             })?
@@ -547,7 +560,13 @@ fn get_absolute_project_and_relative_file(
 }
 
 fn main() {
-    let working_dir = std::fs::canonicalize(".").unwrap();
+    let fs: Arc<Mutex<dyn xfs::Xfs>> = Arc::new(Mutex::new(xfs::OsFs {}));
+
+    let working_dir = fs
+        .lock()
+        .unwrap()
+        .canonicalize(&PathBuf::from("."))
+        .unwrap();
     eprintln!("working_dir = {:?}", working_dir);
     let args = Cli::parse();
 
@@ -562,30 +581,33 @@ fn main() {
         Command::FileStatus(cmd) => {
             // resolve the path relative to the project root.
             let (project_root, file_path) = get_absolute_project_and_relative_file(
+                &*fs.lock().unwrap(),
                 &working_dir,
                 &cmd.path,
                 args.project_root.as_deref(),
             )
             .unwrap();
-
             let event_log = create_event_log(&project_root).unwrap();
-            let status = get_single_file_status(&project_root, &event_log, &file_path).unwrap();
+            let status =
+                get_single_file_status(&fs, &project_root, &event_log, &file_path).unwrap();
             print_single_file_status(&status);
         }
         Command::HelloWorld => {
             // Check the project_root exists
             let project_root = match &args.project_root {
                 Some(p) => {
-                    if !p.join(".wrought").is_dir() {
+                    if !fs.lock().unwrap().is_dir(&p.join(".wrought")) {
                         panic!("specified project root {} has no .wrought subdirectory - it is not a valid root", p.display());
                     }
                     p.clone()
                 }
-                None => match find_marker_dir(&PathBuf::from("."), ".wrought") {
-                    Ok(Some(p)) => p,
-                    Ok(None) => panic!("Unable to find project root for current directory"),
-                    Err(e) => panic!("Error looking for project root: {}", e),
-                },
+                None => {
+                    match find_marker_dir(&*fs.lock().unwrap(), &PathBuf::from("."), ".wrought") {
+                        Ok(Some(p)) => p,
+                        Ok(None) => panic!("Unable to find project root for current directory"),
+                        Err(e) => panic!("Error looking for project root: {}", e),
+                    }
+                }
             };
             // eprintln!("Using project root: '{}'", project_root.display());
 
@@ -597,16 +619,18 @@ fn main() {
             // Check the project_root exists
             let project_root = match &args.project_root {
                 Some(p) => {
-                    if !p.join(".wrought").is_dir() {
+                    if !fs.lock().unwrap().is_dir(&p.join(".wrought")) {
                         panic!("specified project root {} has no .wrought subdirectory - it is not a valid root", p.display());
                     }
                     p.clone()
                 }
-                None => match find_marker_dir(&PathBuf::from("."), ".wrought") {
-                    Ok(Some(p)) => p,
-                    Ok(None) => panic!("Unable to find project root for current directory"),
-                    Err(e) => panic!("Error looking for project root: {}", e),
-                },
+                None => {
+                    match find_marker_dir(&*fs.lock().unwrap(), &PathBuf::from("."), ".wrought") {
+                        Ok(Some(p)) => p,
+                        Ok(None) => panic!("Unable to find project root for current directory"),
+                        Err(e) => panic!("Error looking for project root: {}", e),
+                    }
+                }
             };
             // eprintln!("Using project root: '{}'", project_root.display());
 
@@ -616,16 +640,18 @@ fn main() {
             // Check the project_root exists
             let project_root = match &args.project_root {
                 Some(p) => {
-                    if !p.join(".wrought").is_dir() {
+                    if !fs.lock().unwrap().is_dir(&p.join(".wrought")) {
                         panic!("specified project root {} has no .wrought subdirectory - it is not a valid root", p.display());
                     }
                     p.clone()
                 }
-                None => match find_marker_dir(&PathBuf::from("."), ".wrought") {
-                    Ok(Some(p)) => p,
-                    Ok(None) => panic!("Unable to find project root for current directory"),
-                    Err(e) => panic!("Error looking for project root: {}", e),
-                },
+                None => {
+                    match find_marker_dir(&*fs.lock().unwrap(), &PathBuf::from("."), ".wrought") {
+                        Ok(Some(p)) => p,
+                        Ok(None) => panic!("Unable to find project root for current directory"),
+                        Err(e) => panic!("Error looking for project root: {}", e),
+                    }
+                }
             };
             // eprintln!("Using project root: '{}'", project_root.display());
 
@@ -659,13 +685,12 @@ fn main() {
 // Where do we store state/histort? There advantages to storing it as part of the filesystem,
 // or in a sqlite database. So perhaps we need to abstract the idea of the backend?
 
-pub fn calculate_file_hash(p: &Path) -> anyhow::Result<Option<ContentHash>> {
-    // TODO: Handle errors other than p not existing better
-    if !p.exists() {
-        return Ok(None);
+pub fn calculate_file_hash(fs: &dyn xfs::Xfs, p: &Path) -> anyhow::Result<Option<ContentHash>> {
+    match fs.reader_if_exists(p) {
+        Ok(Some(mut reader)) => Ok(Some(ContentHash::from_reader(&mut reader)?)),
+        Ok(None) => Ok(None),
+        Err(e) => Err(anyhow!(e)),
     }
-    let content = std::fs::read(p)?;
-    Ok(Some(ContentHash::from_content(&content)))
 }
 
 #[derive(Debug)]
@@ -713,6 +738,7 @@ impl TrackedFileStatus {
 }
 
 pub fn get_single_file_status(
+    fs: &Arc<Mutex<dyn xfs::Xfs>>,
     project_root: &Path,
     event_log: &Arc<Mutex<dyn EventLog>>,
     p: &Path,
@@ -737,7 +763,7 @@ pub fn get_single_file_status(
         unreachable!("get_last_write_event returned a non WriteFile event!");
     };
 
-    let current_hash = calculate_file_hash(&project_root.join(p))?;
+    let current_hash = calculate_file_hash(&*fs.lock().unwrap(), &project_root.join(p))?;
     eprintln!("Getting file hash for {:?} = {:?}", p, current_hash);
 
     let Some(event_group) = event_log.get_event_group(event.group_id)? else {
@@ -749,7 +775,8 @@ pub fn get_single_file_status(
         match &e.event_type {
             EventType::ReadFile(read_file_event) => {
                 let path = read_file_event.path.clone();
-                let current_hash = calculate_file_hash(&project_root.join(&path))?;
+                let current_hash =
+                    calculate_file_hash(&*fs.lock().unwrap(), &project_root.join(&path))?;
                 inputs.push(TrackedFileInput {
                     path,
                     tracked_hash: read_file_event.hash.clone(),

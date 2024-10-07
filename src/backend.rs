@@ -54,12 +54,11 @@ impl Backend for DummyBackend {
     ) -> anyhow::Result<Option<MetadataEntry>> {
         eprintln!("DummyBackend::get_metadata({:?}, {:?})", path, key);
         let md_path = self.root.join(".wrought").join("metadata.json");
-        let md_store: BTreeMap<String, BTreeMap<String, String>> = match self.fs.lock().unwrap().reader_if_exists(&md_path)? {
-            Some(reader) => {
-                serde_json::from_reader(reader)?
-            }
-            None => BTreeMap::new(),
-        };
+        let md_store: BTreeMap<String, BTreeMap<String, String>> =
+            match self.fs.lock().unwrap().reader_if_exists(&md_path)? {
+                Some(reader) => serde_json::from_reader(reader)?,
+                None => BTreeMap::new(),
+            };
         let v = md_store
             .get(&path.display().to_string())
             .and_then(|c| c.get(&key.as_string()));
@@ -78,12 +77,11 @@ impl Backend for DummyBackend {
             path, key, value
         );
         let md_path = self.root.join(".wrought").join("metadata.json");
-        let mut md_store: BTreeMap<String, BTreeMap<String, String>> = match self.fs.lock().unwrap().reader_if_exists(&md_path)? {
-            Some(reader) => {
-                serde_json::from_reader(reader)?
-            }
-            None => BTreeMap::new(),
-        };
+        let mut md_store: BTreeMap<String, BTreeMap<String, String>> =
+            match self.fs.lock().unwrap().reader_if_exists(&md_path)? {
+                Some(reader) => serde_json::from_reader(reader)?,
+                None => BTreeMap::new(),
+            };
         let original = md_store
             .get(&path.display().to_string())
             .and_then(|m| m.get(&key.as_string()));
@@ -104,7 +102,7 @@ impl Backend for DummyBackend {
                 md_store.remove(&path.display().to_string());
             }
         }
-        
+
         let writer = self.fs.lock().unwrap().writer(&md_path)?;
         serde_json::to_writer_pretty(writer, &md_store)?;
         eprintln!(
@@ -128,7 +126,7 @@ impl Backend for DummyBackend {
         let p = self.root.join(path);
 
         // Check if the file exists
-        let original_hash =match self.fs.lock().unwrap().reader_if_exists(&p)? {
+        let original_hash = match self.fs.lock().unwrap().reader_if_exists(&p)? {
             Some(mut reader) => {
                 let mut content = vec![];
                 reader.read_to_end(&mut content)?;
@@ -158,11 +156,8 @@ impl Backend for DummyBackend {
             Some(mut reader) => {
                 let mut content = vec![];
                 reader.read_to_end(&mut content)?;
-                Some((
-                    ContentHash::from_content(&content),
-                    content
-                ))
-            },
+                Some((ContentHash::from_content(&content), content))
+            }
             None => None,
         };
 
