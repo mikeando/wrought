@@ -19,7 +19,7 @@ pub mod metadata;
 pub mod scripting_luau;
 
 use binary16::ContentHash;
-use content_store::DummyContentStore;
+use content_store::{ContentStore, DummyContentStore};
 use event_log::{DummyEventLog, EventLog};
 use events::{Event, EventGroup};
 use events::{EventType, GetMetadataEvent, SetMetadataEvent, WriteFileEvent};
@@ -167,6 +167,8 @@ enum Command {
     Init(InitCmd),
     RunScript(RunScriptCmd),
     Status(StatusCmd),
+    History(HistoryCmd),
+    ContentStoreShow(ContentStoreShowCmd),
     HelloWorld,
 }
 
@@ -188,6 +190,17 @@ struct FileStatusCmd {
 #[derive(Debug, Parser)]
 struct RunScriptCmd {
     script_name: String,
+}
+
+#[derive(Debug, Parser)]
+struct HistoryCmd {
+    path: PathBuf,
+}
+
+//TODO: Make this a sub-command on a ContentStore function
+#[derive(Debug, Parser)]
+struct ContentStoreShowCmd {
+    hash: String,
 }
 
 fn find_first_existing_parent(
@@ -559,6 +572,70 @@ fn get_absolute_project_and_relative_file(
     Ok((project_root, relative_file_path))
 }
 
+fn cmd_history(
+    cmd: HistoryCmd,
+    fs: Arc<Mutex<dyn xfs::Xfs>>,
+    event_log: Arc<Mutex<dyn EventLog>>,
+    project_root: &Path,
+    file_path: &Path,
+) -> anyhow::Result<()> {
+    let events = event_log.lock().unwrap().get_file_history(file_path)?;
+    let fmt_opt_hash = |h: &Option<ContentHash>| -> String {
+        h.as_ref()
+            .map(|h| h.to_string())
+            .unwrap_or("nothing".to_string())
+    };
+    let mut last_write_hash = None;
+    for e in events {
+        match e.event_type {
+            EventType::WriteFile(write_file_event) => {
+                if write_file_event.before_hash != last_write_hash {
+                    eprintln!("- {} : ???", fmt_opt_hash(&write_file_event.before_hash));
+                }
+                let group = event_log.lock().unwrap().get_event_group(e.group_id)?;
+                eprintln!(
+                    "+ {} : {}",
+                    fmt_opt_hash(&write_file_event.after_hash),
+                    group.unwrap().command
+                );
+                last_write_hash = write_file_event.after_hash;
+            }
+            EventType::ReadFile(read_file_event) => {}
+            EventType::GetMetadata(get_metadata_event) => {}
+            EventType::SetMetadata(set_metadata_event) => eprint!("{:?}", set_metadata_event),
+        }
+    }
+    // Now check the actual file
+    let cur_hash = if let Some(mut reader) = fs
+        .lock()
+        .unwrap()
+        .reader_if_exists(&project_root.join(file_path))?
+    {
+        let mut buf = vec![];
+        reader.read_to_end(&mut buf)?;
+        Some(ContentHash::from_content(&buf))
+    } else {
+        None
+    };
+    if cur_hash != last_write_hash {
+        eprintln!("- {} : local changes", fmt_opt_hash(&cur_hash))
+    }
+    Ok(())
+}
+
+fn cmd_content_store_show(
+    cmd: ContentStoreShowCmd,
+    content_store: Arc<Mutex<dyn ContentStore>>,
+) -> anyhow::Result<()> {
+    let hash = ContentHash::from_string(&cmd.hash)?;
+    let content = content_store.lock().unwrap().retrieve(hash)?;
+    let Some(content) = content else {
+        return Err(anyhow!("Hash does not correspond to known content"));
+    };
+    print!("{}", String::from_utf8_lossy(&content));
+    Ok(())
+}
+
 fn main() {
     let fs: Arc<Mutex<dyn xfs::Xfs>> = Arc::new(Mutex::new(xfs::OsFs {}));
 
@@ -567,7 +644,6 @@ fn main() {
         .unwrap()
         .canonicalize(&PathBuf::from("."))
         .unwrap();
-    eprintln!("working_dir = {:?}", working_dir);
     let args = Cli::parse();
 
     // Have to handle Init differntly as it doesn't care about the project_root already
@@ -635,6 +711,40 @@ fn main() {
             // eprintln!("Using project root: '{}'", project_root.display());
 
             cmd_status(&project_root, cmd).unwrap();
+        }
+        Command::History(cmd) => {
+            // resolve the path relative to the project root.
+            let (project_root, file_path) = get_absolute_project_and_relative_file(
+                &*fs.lock().unwrap(),
+                &working_dir,
+                &cmd.path,
+                args.project_root.as_deref(),
+            )
+            .unwrap();
+            let event_log = create_event_log(&project_root).unwrap();
+            cmd_history(cmd, fs, event_log, &project_root, &file_path).unwrap();
+        }
+        Command::ContentStoreShow(cmd) => {
+            // resolve the path relative to the project root.
+            // Has the user specified a path?
+            let project_root = match args.project_root {
+                Some(project_root) => fs
+                    .lock()
+                    .unwrap()
+                    .canonicalize(&working_dir.join(project_root))
+                    .unwrap(),
+                None => find_marker_dir(&*fs.lock().unwrap(), &working_dir, ".wrought")
+                    .unwrap()
+                    .unwrap(),
+            };
+
+            let content_storage_path = project_root.join("_content");
+            let content_store = Arc::new(Mutex::new(DummyContentStore::new(
+                fs.clone(),
+                content_storage_path,
+            )));
+
+            cmd_content_store_show(cmd, content_store).unwrap();
         }
         Command::RunScript(cmd) => {
             // Check the project_root exists

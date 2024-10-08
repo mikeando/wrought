@@ -26,10 +26,6 @@ impl DummyContentStore {
 
 impl ContentStore for DummyContentStore {
     fn store(&mut self, value: &[u8]) -> anyhow::Result<ContentHash> {
-        println!(
-            "DummyContentStore: store('{:?}')",
-            String::from_utf8_lossy(value)
-        );
         let hash = ContentHash::from_content(value);
         let path = self.storage_path.join(hash.to_string());
         self.fs.lock().unwrap().writer(&path)?.write_all(value)?;
@@ -37,7 +33,6 @@ impl ContentStore for DummyContentStore {
     }
 
     fn retrieve(&self, hash: ContentHash) -> anyhow::Result<Option<Vec<u8>>> {
-        println!("DummyContentStore: retrieve({:?})", hash.to_string());
         let path = self.storage_path.join(hash.to_string());
         match self.fs.lock().unwrap().reader_if_exists(&path)? {
             Some(mut reader) => {

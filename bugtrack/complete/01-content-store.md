@@ -1,6 +1,6 @@
 # Integrate content store into file management
 
-## Status: Backlog - P2
+## Status: Implemented
 
 ## Problem 
 
@@ -19,9 +19,8 @@ The user should be able to do something like the following:
 + das1asdj-dgfgasd 'Manual update'
 + degfgdh-ushdhfsu 'Manual update'
 - sdfsghs-sdfkjsdf 'Local Changes'
->>> wrought content-store show das1asdj-dgfgasd
+>>> wrought content-store-show das1asdj-dgfgasd
 This is some file content
->>> wrought content-store write-file das1asdj-dgfgasd myfile.md
 ```
 
 ## Issue log

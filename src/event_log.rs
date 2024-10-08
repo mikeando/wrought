@@ -9,6 +9,7 @@ use crate::{
 
 pub trait EventLog {
     fn get_last_write_event(&self, p: &Path) -> anyhow::Result<Option<Event>>;
+    fn get_file_history(&self, p: &Path) -> anyhow::Result<Vec<Event>>;
     fn get_event_group(&self, group_id: u64) -> anyhow::Result<Option<EventGroup>>;
 
     /// Input must have group_id and ids all set to zero.
@@ -49,6 +50,19 @@ impl EventLog for DummyEventLog {
         };
         let event = self.event_from_event_row(event_row)?;
         Ok(Some(event))
+    }
+
+    fn get_file_history(&self, p: &Path) -> anyhow::Result<Vec<Event>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT * FROM Events WHERE file_path=?1 ORDER BY id DESC LIMIT 1")?;
+        let mut events = stmt.query([format!("{}", p.display())])?;
+        let mut result = vec![];
+        while let Some(event_row) = events.next()? {
+            let event = self.event_from_event_row(event_row)?;
+            result.push(event);
+        }
+        Ok(result)
     }
 
     fn get_event_group(&self, group_id: u64) -> anyhow::Result<Option<EventGroup>> {
