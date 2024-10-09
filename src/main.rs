@@ -15,6 +15,7 @@ pub mod content_store;
 pub mod event_log;
 pub mod events;
 pub mod fs_utils;
+pub mod llm;
 pub mod metadata;
 pub mod scripting_luau;
 
