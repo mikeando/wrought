@@ -4,9 +4,12 @@ use std::{
 };
 
 use crate::{
-    backend::Backend, events::{
+    backend::Backend,
+    events::{
         Event, EventGroup, GetMetadataEvent, ReadFileEvent, SetMetadataEvent, WriteFileEvent,
-    }, llm::LLM, metadata::{MetadataEntry, MetadataKey}
+    },
+    llm::LLM,
+    metadata::{MetadataEntry, MetadataKey},
 };
 
 pub trait Bridge {
@@ -87,12 +90,10 @@ impl Bridge for DummyBridge {
         }
         Some(self.event_group.clone())
     }
-    
+
     fn ai_query(&mut self, query: &str) -> anyhow::Result<String> {
         self.llm.lock().unwrap().query(query)
     }
-
-    
 }
 
 impl DummyBridge {

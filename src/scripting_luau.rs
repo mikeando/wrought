@@ -80,11 +80,11 @@ pub fn lua_set_metadata(
 
 pub fn lua_ai_query(
     bridge: &Arc<Mutex<dyn Bridge>>,
-    _lua: &Lua, 
-    query: String) -> anyhow::Result<String> {
+    _lua: &Lua,
+    query: String,
+) -> anyhow::Result<String> {
     bridge.lock().unwrap().ai_query(&query)
 }
-
 
 fn add_bridge_function<'lua, F, A, R>(
     bridge: &Arc<Mutex<dyn Bridge>>,
@@ -111,7 +111,7 @@ pub fn run_script(
     fs: Arc<Mutex<dyn xfs::Xfs>>,
     script_path: &Path,
 ) -> anyhow::Result<()> {
-    run_script_ex(bridge, fs, script_path, |_|Ok(()))
+    run_script_ex(bridge, fs, script_path, |_| Ok(()))
 }
 
 // The additional F function is used to add hooks when testing
@@ -121,8 +121,8 @@ pub fn run_script_ex<F>(
     script_path: &Path,
     f: F,
 ) -> anyhow::Result<()>
-where 
-    F: FnOnce(&Lua) -> anyhow::Result<()>
+where
+    F: FnOnce(&Lua) -> anyhow::Result<()>,
 {
     let lua = Lua::new();
 
@@ -190,9 +190,9 @@ mod tests {
             self.read_calls.push((path.into(), result))
         }
 
-        pub fn expect_ai_query<Q: Into<String>>( 
-            &mut self, 
-            query: Q, 
+        pub fn expect_ai_query<Q: Into<String>>(
+            &mut self,
+            query: Q,
             result: anyhow::Result<String>,
         ) {
             self.ai_query_calls.push((query.into(), result))
@@ -250,7 +250,7 @@ mod tests {
         fn get_event_group(&self) -> Option<crate::events::EventGroup> {
             todo!()
         }
-        
+
         fn ai_query(&mut self, query: &str) -> anyhow::Result<String> {
             // Impolite to panic inside luau, so instead we error and add a failure message to the mock.
             let Some(expected) = self.ai_query_calls.pop() else {
@@ -265,16 +265,13 @@ mod tests {
             }
             expected.1
         }
-        
     }
 
-
-    pub fn add_test_helpers(lua: &Lua, calls: Arc<Mutex<Vec<String>>>) -> anyhow::Result<()> 
-    {
+    pub fn add_test_helpers(lua: &Lua, calls: Arc<Mutex<Vec<String>>>) -> anyhow::Result<()> {
         let globals = lua.globals();
         globals.set(
             "push_test_value",
-            lua.create_function( move|_l, v: String| {
+            lua.create_function(move |_l, v: String| {
                 calls.lock().unwrap().push(v);
                 Ok(())
             })?,
@@ -454,13 +451,21 @@ mod tests {
 
         fs.add_r(
             &PathBuf::from("somedir/script.luau"),
-            vec![r#"content = ai_query("Tell me a fun story")"#,
-            r#"push_test_value(content)"#].join("\n").as_bytes().to_vec(),
+            vec![
+                r#"content = ai_query("Tell me a fun story")"#,
+                r#"push_test_value(content)"#,
+            ]
+            .join("\n")
+            .as_bytes()
+            .to_vec(),
         )
         .unwrap();
 
         let mut mock_bridge = MockBridge::new();
-        mock_bridge.expect_ai_query("Tell me a fun story", Ok("There once was a fish".to_string()));
+        mock_bridge.expect_ai_query(
+            "Tell me a fun story",
+            Ok("There once was a fish".to_string()),
+        );
 
         let mock_bridge = Arc::new(Mutex::new(mock_bridge));
         let fs = Arc::new(Mutex::new(fs));
@@ -471,15 +476,17 @@ mod tests {
             mock_bridge.clone(),
             fs,
             &PathBuf::from("somedir/script.luau"),
-            |l| add_test_helpers(l, test_values_copy)
+            |l| add_test_helpers(l, test_values_copy),
         );
         eprintln!("{:?}", result);
         assert!(result.is_ok());
-        assert_eq!(test_values.lock().unwrap().clone(), vec!["There once was a fish"]);
+        assert_eq!(
+            test_values.lock().unwrap().clone(),
+            vec!["There once was a fish"]
+        );
 
         mock_bridge.lock().unwrap().check();
     }
-
 
     #[test]
     pub fn make_ai_query_error() {
@@ -487,8 +494,13 @@ mod tests {
 
         fs.add_r(
             &PathBuf::from("somedir/script.luau"),
-            vec![r#"content = ai_query("Tell me a fun story")"#,
-            r#"push_test_value(content)"#].join("\n").as_bytes().to_vec(),
+            vec![
+                r#"content = ai_query("Tell me a fun story")"#,
+                r#"push_test_value(content)"#,
+            ]
+            .join("\n")
+            .as_bytes()
+            .to_vec(),
         )
         .unwrap();
 
@@ -504,7 +516,7 @@ mod tests {
             mock_bridge.clone(),
             fs,
             &PathBuf::from("somedir/script.luau"),
-            |l| add_test_helpers(l, test_values_copy)
+            |l| add_test_helpers(l, test_values_copy),
         );
         assert!(result.is_err());
         assert!(test_values.lock().unwrap().is_empty());
