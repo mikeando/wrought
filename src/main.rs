@@ -25,6 +25,7 @@ use event_log::{DummyEventLog, EventLog};
 use events::{Event, EventGroup};
 use events::{EventType, GetMetadataEvent, SetMetadataEvent, WriteFileEvent};
 
+use llm::OpenAILLM;
 use metadata::MetadataEntry;
 use metadata::MetadataKey;
 use scripting_luau::run_script;
@@ -501,10 +502,17 @@ pub fn create_bridge(path: &Path) -> anyhow::Result<Arc<Mutex<dyn Bridge>>> {
     let fs = Arc::new(Mutex::new(xfs::OsFs {}));
     let root = fs.lock().unwrap().canonicalize(path)?;
     let backend = create_backend(path)?;
+    let llm_cache_dir = root.join(".wrought").join("llm_cache");
+    fs.lock().unwrap().create_dir_all(&llm_cache_dir)?;
+    // TODO: Get this from somewhere...
+    let openai_api_key = "NOT_REALLY_A_KEY".to_string();
+    let llm = OpenAILLM::create_with_key(openai_api_key, fs, &llm_cache_dir)?;
+    let llm = Arc::new(Mutex::new(llm));
     Ok(Arc::new(Mutex::new(DummyBridge {
         root,
         backend,
         event_group: EventGroup::empty(),
+        llm,
     })))
 }
 

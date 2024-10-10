@@ -15,3 +15,6 @@ serde_json = "1.0.128"
 sha2 = "0.10.8"
 mlua = { version = "0.9.9", features = ["luau"] }
 rust_openai = { path = "../rust_openai"}
+tokio = { version = "1", features = ["full"] }
+async-trait = "0.1"
+
