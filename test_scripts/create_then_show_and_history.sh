@@ -1,5 +1,6 @@
 #! /usr/bin/env bash
 set -euo pipefail
+
 cargo build
 wrought=./target/debug/wrought
 PROJECT_DIR=test_projects/dummy02

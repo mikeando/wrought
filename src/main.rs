@@ -15,6 +15,7 @@ pub mod content_store;
 pub mod event_log;
 pub mod events;
 pub mod fs_utils;
+pub mod llm;
 pub mod metadata;
 pub mod scripting_luau;
 
@@ -24,9 +25,11 @@ use event_log::{DummyEventLog, EventLog};
 use events::{Event, EventGroup};
 use events::{EventType, GetMetadataEvent, SetMetadataEvent, WriteFileEvent};
 
+use llm::{InvalidLLM, OpenAILLM, LLM};
 use metadata::MetadataEntry;
 use metadata::MetadataKey;
 use scripting_luau::run_script;
+use serde_json::json;
 use xfs::Xfs;
 
 pub struct Wrought {
@@ -267,6 +270,29 @@ fn cmd_init(cmd: &InitCmd) -> anyhow::Result<()> {
         );
     }
 
+    fs.lock().unwrap().create_dir_all(path).unwrap();
+    fs.lock()
+        .unwrap()
+        .create_dir_all(&path.join(".wrought"))
+        .unwrap();
+
+    let mut writer = fs
+        .lock()
+        .unwrap()
+        .writer(&path.join(".wrought").join("settings.toml"))?;
+    writer.write_all(
+        vec![
+            "# General Project Settings",
+            "",
+            "# LLM Settings",
+            "# Uncomment and set to enable LLM features",
+            "# openai_api_key = \"PUT_YOUR_KEY_HERE\"",
+            "",
+        ]
+        .join("\n")
+        .as_bytes(),
+    )?;
+
     let content_dir = path.join("_content");
     fs.lock().unwrap().create_dir_all(&content_dir).unwrap();
 
@@ -274,7 +300,6 @@ fn cmd_init(cmd: &InitCmd) -> anyhow::Result<()> {
     let src_package_dir = PathBuf::from("./resources/packages/");
     let project_package_dir = path.join(".wrought").join("packages");
 
-    fs.lock().unwrap().create_dir_all(path).unwrap();
     fs.lock()
         .unwrap()
         .create_dir_all(&path.join(".wrought"))
@@ -498,12 +523,52 @@ pub fn create_event_log(path: &Path) -> anyhow::Result<Arc<Mutex<dyn EventLog>>>
 
 pub fn create_bridge(path: &Path) -> anyhow::Result<Arc<Mutex<dyn Bridge>>> {
     let fs = Arc::new(Mutex::new(xfs::OsFs {}));
+    // Load up an settings in the project settings file - needed
+    // to initialise the openAI LLM.
     let root = fs.lock().unwrap().canonicalize(path)?;
+    let reader = fs
+        .lock()
+        .unwrap()
+        .reader_if_exists(&root.join(".wrought").join("settings.toml"))?;
+    let settings = match reader {
+        Some(mut reader) => {
+            let mut settings = String::new();
+            reader.read_to_string(&mut settings)?;
+            settings.parse::<toml::Table>()?
+        }
+        None => toml::Table::new(),
+    };
     let backend = create_backend(path)?;
+    let llm_cache_dir = root.join(".wrought").join("llm_cache");
+    fs.lock().unwrap().create_dir_all(&llm_cache_dir)?;
+    // TODO: Get this from somewhere...
+
+    let openai_api_key = match settings.get("openai_api_key") {
+        Some(openai_api_key) => Some(
+            openai_api_key
+                .as_str()
+                .context("invalid setting: openai_api_key is not a string")?
+                .to_string(),
+        ),
+        None => None,
+    };
+    let llm: Arc<Mutex<dyn LLM>> = match openai_api_key {
+        Some(openai_api_key) => {
+            let llm = OpenAILLM::create_with_key(openai_api_key, fs, &llm_cache_dir)?;
+            Arc::new(Mutex::new(llm))
+        }
+        None => {
+            let llm =
+                InvalidLLM::create_with_error_message("no openAI key specified in settings file");
+            Arc::new(Mutex::new(llm))
+        }
+    };
+
     Ok(Arc::new(Mutex::new(DummyBridge {
         root,
         backend,
         event_group: EventGroup::empty(),
+        llm,
     })))
 }
 

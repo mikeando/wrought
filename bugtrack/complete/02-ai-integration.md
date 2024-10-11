@@ -1,6 +1,6 @@
 # Initial AI Integration
 
-## Status: Backlog - P1
+## Status: Backlog - DONE
 
 ## Problem 
 
@@ -19,12 +19,13 @@ wrought_ai_query(request:str) -> str
 
 Additional functionality will come from using templates and knowledge-base integration, which will come later.
 
-
 ## Issue log
 
 * We still need to consider "tool" support 
     - how we get structured output back to the scripts
     - how we accept definitions of the tools from the scripts
+    - For now this is moved to 14-support-ai-tools.md
 
 * This is pretty lame as CLI usage. It really needs access to document content etc. But that can come later?
+* The openAI api key is pulled from .wrought/settings.toml.
 

@@ -8,6 +8,7 @@ use crate::{
     events::{
         Event, EventGroup, GetMetadataEvent, ReadFileEvent, SetMetadataEvent, WriteFileEvent,
     },
+    llm::LLM,
     metadata::{MetadataEntry, MetadataKey},
 };
 
@@ -16,12 +17,14 @@ pub trait Bridge {
     fn read_file(&mut self, path: &Path) -> anyhow::Result<Option<Vec<u8>>>;
     fn get_metadata(&mut self, path: &Path, key: &str) -> anyhow::Result<Option<String>>;
     fn set_metadata(&mut self, path: &Path, key: &str, value: &str) -> anyhow::Result<()>;
+    fn ai_query(&mut self, query: &str) -> anyhow::Result<String>;
     fn get_event_group(&self) -> Option<EventGroup>;
 }
 
 pub struct DummyBridge {
     pub backend: Arc<Mutex<dyn Backend>>,
     // pub event_log: Arc<Mutex< dyn EventLog >>,
+    pub llm: Arc<Mutex<dyn LLM>>,
     pub root: PathBuf,
 
     pub event_group: EventGroup,
@@ -86,6 +89,10 @@ impl Bridge for DummyBridge {
             return None;
         }
         Some(self.event_group.clone())
+    }
+
+    fn ai_query(&mut self, query: &str) -> anyhow::Result<String> {
+        self.llm.lock().unwrap().query(query)
     }
 }
 

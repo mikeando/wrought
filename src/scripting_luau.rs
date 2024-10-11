@@ -70,12 +70,20 @@ pub fn lua_set_metadata(
     _lua: &Lua,
     (file_name, key, value): (String, String, String),
 ) -> anyhow::Result<()> {
-    eprintln!("In luad_set_metadata...");
+    eprintln!("In lua_set_metadata...");
     bridge
         .lock()
         .unwrap()
         .set_metadata(&PathBuf::from(file_name), &key, &value)?;
     Ok(())
+}
+
+pub fn lua_ai_query(
+    bridge: &Arc<Mutex<dyn Bridge>>,
+    _lua: &Lua,
+    query: String,
+) -> anyhow::Result<String> {
+    bridge.lock().unwrap().ai_query(&query)
 }
 
 fn add_bridge_function<'lua, F, A, R>(
@@ -103,6 +111,19 @@ pub fn run_script(
     fs: Arc<Mutex<dyn xfs::Xfs>>,
     script_path: &Path,
 ) -> anyhow::Result<()> {
+    run_script_ex(bridge, fs, script_path, |_| Ok(()))
+}
+
+// The additional F function is used to add hooks when testing
+pub fn run_script_ex<F>(
+    bridge: Arc<Mutex<dyn Bridge>>,
+    fs: Arc<Mutex<dyn xfs::Xfs>>,
+    script_path: &Path,
+    f: F,
+) -> anyhow::Result<()>
+where
+    F: FnOnce(&Lua) -> anyhow::Result<()>,
+{
     let lua = Lua::new();
 
     lua.sandbox(true)?;
@@ -115,6 +136,9 @@ pub fn run_script(
     add_bridge_function(&bridge, &lua, "read_file", lua_read_file)?;
     add_bridge_function(&bridge, &lua, "set_metadata", lua_set_metadata)?;
     add_bridge_function(&bridge, &lua, "get_metadata", lua_get_metadata)?;
+    add_bridge_function(&bridge, &lua, "ai_query", lua_ai_query)?;
+
+    f(&lua)?;
 
     let mut script = String::new();
     fs.lock()
@@ -135,6 +159,7 @@ mod tests {
     pub struct MockBridge {
         write_calls: Vec<(PathBuf, Vec<u8>, anyhow::Result<()>)>,
         read_calls: Vec<(PathBuf, anyhow::Result<Option<Vec<u8>>>)>,
+        ai_query_calls: Vec<(String, anyhow::Result<String>)>,
         errors: Vec<String>,
     }
 
@@ -143,6 +168,7 @@ mod tests {
             MockBridge {
                 write_calls: vec![],
                 read_calls: vec![],
+                ai_query_calls: vec![],
                 errors: vec![],
             }
         }
@@ -164,8 +190,18 @@ mod tests {
             self.read_calls.push((path.into(), result))
         }
 
+        pub fn expect_ai_query<Q: Into<String>>(
+            &mut self,
+            query: Q,
+            result: anyhow::Result<String>,
+        ) {
+            self.ai_query_calls.push((query.into(), result))
+        }
+
         pub fn check(&self) {
             assert!(self.write_calls.is_empty());
+            assert!(self.read_calls.is_empty());
+            assert!(self.ai_query_calls.is_empty());
             if !self.errors.is_empty() {
                 panic!("Unexpected errors in mock: {:?}", self.errors);
             }
@@ -214,6 +250,33 @@ mod tests {
         fn get_event_group(&self) -> Option<crate::events::EventGroup> {
             todo!()
         }
+
+        fn ai_query(&mut self, query: &str) -> anyhow::Result<String> {
+            // Impolite to panic inside luau, so instead we error and add a failure message to the mock.
+            let Some(expected) = self.ai_query_calls.pop() else {
+                self.errors
+                    .push(format!("Call to ai_query when expected calls is empty"));
+                return Err(anyhow!("Call to ai_query when expected calls is empty"));
+            };
+            if query != expected.0 {
+                self.errors
+                    .push(format!("Call to read_file does not match expected"));
+                return Err(anyhow!("Call to read_file does not match expected"));
+            }
+            expected.1
+        }
+    }
+
+    pub fn add_test_helpers(lua: &Lua, calls: Arc<Mutex<Vec<String>>>) -> anyhow::Result<()> {
+        let globals = lua.globals();
+        globals.set(
+            "push_test_value",
+            lua.create_function(move |_l, v: String| {
+                calls.lock().unwrap().push(v);
+                Ok(())
+            })?,
+        )?;
+        Ok(())
     }
 
     #[test]
@@ -380,5 +443,84 @@ mod tests {
     #[test]
     pub fn run_script_get_metadata() {
         todo!();
+    }
+
+    #[test]
+    pub fn make_ai_query() {
+        let mut fs = xfs::mockfs::MockFS::new();
+
+        fs.add_r(
+            &PathBuf::from("somedir/script.luau"),
+            vec![
+                r#"content = ai_query("Tell me a fun story")"#,
+                r#"push_test_value(content)"#,
+            ]
+            .join("\n")
+            .as_bytes()
+            .to_vec(),
+        )
+        .unwrap();
+
+        let mut mock_bridge = MockBridge::new();
+        mock_bridge.expect_ai_query(
+            "Tell me a fun story",
+            Ok("There once was a fish".to_string()),
+        );
+
+        let mock_bridge = Arc::new(Mutex::new(mock_bridge));
+        let fs = Arc::new(Mutex::new(fs));
+
+        let test_values = Arc::new(Mutex::new(vec![]));
+        let test_values_copy = test_values.clone();
+        let result = run_script_ex(
+            mock_bridge.clone(),
+            fs,
+            &PathBuf::from("somedir/script.luau"),
+            |l| add_test_helpers(l, test_values_copy),
+        );
+        eprintln!("{:?}", result);
+        assert!(result.is_ok());
+        assert_eq!(
+            test_values.lock().unwrap().clone(),
+            vec!["There once was a fish"]
+        );
+
+        mock_bridge.lock().unwrap().check();
+    }
+
+    #[test]
+    pub fn make_ai_query_error() {
+        let mut fs = xfs::mockfs::MockFS::new();
+
+        fs.add_r(
+            &PathBuf::from("somedir/script.luau"),
+            vec![
+                r#"content = ai_query("Tell me a fun story")"#,
+                r#"push_test_value(content)"#,
+            ]
+            .join("\n")
+            .as_bytes()
+            .to_vec(),
+        )
+        .unwrap();
+
+        let mut mock_bridge = MockBridge::new();
+        mock_bridge.expect_ai_query("Tell me a fun story", Err(anyhow!("Network is tofu")));
+
+        let mock_bridge = Arc::new(Mutex::new(mock_bridge));
+        let fs = Arc::new(Mutex::new(fs));
+
+        let test_values = Arc::new(Mutex::new(vec![]));
+        let test_values_copy = test_values.clone();
+        let result = run_script_ex(
+            mock_bridge.clone(),
+            fs,
+            &PathBuf::from("somedir/script.luau"),
+            |l| add_test_helpers(l, test_values_copy),
+        );
+        assert!(result.is_err());
+        assert!(test_values.lock().unwrap().is_empty());
+
+        mock_bridge.lock().unwrap().check();
     }
 }
