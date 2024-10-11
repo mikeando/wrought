@@ -271,17 +271,26 @@ fn cmd_init(cmd: &InitCmd) -> anyhow::Result<()> {
     }
 
     fs.lock().unwrap().create_dir_all(path).unwrap();
-    fs.lock().unwrap().create_dir_all(&path.join(".wrought")).unwrap();
+    fs.lock()
+        .unwrap()
+        .create_dir_all(&path.join(".wrought"))
+        .unwrap();
 
-    let mut writer = fs.lock().unwrap().writer(&path.join(".wrought").join("settings.toml"))?;
-    writer.write_all(vec![
+    let mut writer = fs
+        .lock()
+        .unwrap()
+        .writer(&path.join(".wrought").join("settings.toml"))?;
+    writer.write_all(
+        vec![
             "# General Project Settings",
             "",
             "# LLM Settings",
             "# Uncomment and set to enable LLM features",
             "# openai_api_key = \"PUT_YOUR_KEY_HERE\"",
             "",
-        ].join("\n").as_bytes()
+        ]
+        .join("\n")
+        .as_bytes(),
     )?;
 
     let content_dir = path.join("_content");
@@ -517,22 +526,30 @@ pub fn create_bridge(path: &Path) -> anyhow::Result<Arc<Mutex<dyn Bridge>>> {
     // Load up an settings in the project settings file - needed
     // to initialise the openAI LLM.
     let root = fs.lock().unwrap().canonicalize(path)?;
-    let reader = fs.lock().unwrap().reader_if_exists(&root.join(".wrought").join("settings.toml"))?;
+    let reader = fs
+        .lock()
+        .unwrap()
+        .reader_if_exists(&root.join(".wrought").join("settings.toml"))?;
     let settings = match reader {
-        Some(mut reader) =>  {
+        Some(mut reader) => {
             let mut settings = String::new();
             reader.read_to_string(&mut settings)?;
             settings.parse::<toml::Table>()?
         }
-        None => toml::Table::new()
+        None => toml::Table::new(),
     };
     let backend = create_backend(path)?;
     let llm_cache_dir = root.join(".wrought").join("llm_cache");
     fs.lock().unwrap().create_dir_all(&llm_cache_dir)?;
     // TODO: Get this from somewhere...
-    
+
     let openai_api_key = match settings.get("openai_api_key") {
-        Some(openai_api_key) => Some(openai_api_key.as_str().context("invalid setting: openai_api_key is not a string")?.to_string()),
+        Some(openai_api_key) => Some(
+            openai_api_key
+                .as_str()
+                .context("invalid setting: openai_api_key is not a string")?
+                .to_string(),
+        ),
         None => None,
     };
     let llm: Arc<Mutex<dyn LLM>> = match openai_api_key {
@@ -541,9 +558,10 @@ pub fn create_bridge(path: &Path) -> anyhow::Result<Arc<Mutex<dyn Bridge>>> {
             Arc::new(Mutex::new(llm))
         }
         None => {
-            let llm = InvalidLLM::create_with_error_message("no openAI key specified in settings file");
+            let llm =
+                InvalidLLM::create_with_error_message("no openAI key specified in settings file");
             Arc::new(Mutex::new(llm))
-        },
+        }
     };
 
     Ok(Arc::new(Mutex::new(DummyBridge {

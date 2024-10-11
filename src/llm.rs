@@ -124,12 +124,14 @@ impl LLM for OpenAILLM {
 }
 
 pub struct InvalidLLM {
-    error_message: String
+    error_message: String,
 }
 
 impl InvalidLLM {
-    pub(crate) fn create_with_error_message<T: Into<String>>(error_message: T) ->InvalidLLM {
-        InvalidLLM{ error_message:error_message.into()}
+    pub(crate) fn create_with_error_message<T: Into<String>>(error_message: T) -> InvalidLLM {
+        InvalidLLM {
+            error_message: error_message.into(),
+        }
     }
 }
 
