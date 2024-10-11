@@ -17,6 +17,9 @@ content = ai_query("Tell me a fun story")
 print("AI SAYS: ", content)
 EOF
 
+echo "INSTALLING A DUMMY OPEN AI KEY"
+echo 'openai_api_key = "NO-SUCH-KEY"' >> ${PROJECT_DIR}/.wrought/settings.toml
+
 echo "INSTALLING THE AI CACHE"
 # This means we dont actually need to hit openAI as the query is cached.
 

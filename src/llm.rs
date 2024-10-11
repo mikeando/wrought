@@ -6,6 +6,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+use anyhow::bail;
 use async_trait::async_trait;
 use rust_openai::types::{ChatRequest, SystemMessage};
 
@@ -119,5 +120,21 @@ impl OpenAILLM {
 impl LLM for OpenAILLM {
     fn query(&mut self, query: &str) -> anyhow::Result<String> {
         Self::run_async(self.query_async(query))
+    }
+}
+
+pub struct InvalidLLM {
+    error_message: String
+}
+
+impl InvalidLLM {
+    pub(crate) fn create_with_error_message<T: Into<String>>(error_message: T) ->InvalidLLM {
+        InvalidLLM{ error_message:error_message.into()}
+    }
+}
+
+impl LLM for InvalidLLM {
+    fn query(&mut self, _query: &str) -> anyhow::Result<String> {
+        bail!("Unable to access LLM: {}", self.error_message)
     }
 }
