@@ -1,6 +1,6 @@
 # Integrate Xfa to allow testing without hitting the filesystem
 
-## Status: Backlog - P1
+## Status: Backlog - DONE
 
 ## Problem 
 
