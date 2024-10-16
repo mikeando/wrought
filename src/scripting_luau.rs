@@ -152,118 +152,23 @@ where
 
 #[cfg(test)]
 mod tests {
+    use crate::events::EventGroup;
+
     use super::*;
     use anyhow::anyhow;
+    use mockall::{mock, predicate};
     use std::sync::{Arc, Mutex};
 
-    pub struct MockBridge {
-        write_calls: Vec<(PathBuf, Vec<u8>, anyhow::Result<()>)>,
-        read_calls: Vec<(PathBuf, anyhow::Result<Option<Vec<u8>>>)>,
-        ai_query_calls: Vec<(String, anyhow::Result<String>)>,
-        errors: Vec<String>,
-    }
+    mock! {
+        pub Bridge {}
 
-    impl MockBridge {
-        pub fn new() -> MockBridge {
-            MockBridge {
-                write_calls: vec![],
-                read_calls: vec![],
-                ai_query_calls: vec![],
-                errors: vec![],
-            }
-        }
-
-        pub fn expect_write_file<P: Into<PathBuf>>(
-            &mut self,
-            path: P,
-            value: &[u8],
-            result: anyhow::Result<()>,
-        ) {
-            self.write_calls.push((path.into(), value.to_vec(), result))
-        }
-
-        pub fn expect_read_file<P: Into<PathBuf>>(
-            &mut self,
-            path: P,
-            result: anyhow::Result<Option<Vec<u8>>>,
-        ) {
-            self.read_calls.push((path.into(), result))
-        }
-
-        pub fn expect_ai_query<Q: Into<String>>(
-            &mut self,
-            query: Q,
-            result: anyhow::Result<String>,
-        ) {
-            self.ai_query_calls.push((query.into(), result))
-        }
-
-        pub fn check(&self) {
-            assert!(self.write_calls.is_empty());
-            assert!(self.read_calls.is_empty());
-            assert!(self.ai_query_calls.is_empty());
-            if !self.errors.is_empty() {
-                panic!("Unexpected errors in mock: {:?}", self.errors);
-            }
-        }
-    }
-
-    impl Bridge for MockBridge {
-        fn write_file(&mut self, path: &Path, value: &[u8]) -> anyhow::Result<()> {
-            // Impolite to panic inside luau, so instead we error and add a failure message to the mock.
-            let Some(expected) = self.write_calls.pop() else {
-                self.errors
-                    .push(format!("Call to write_file when expected calls is empty"));
-                return Err(anyhow!("Call to write_file when expected calls is empty"));
-            };
-            if path != expected.0 || value != expected.1 {
-                self.errors
-                    .push(format!("Call to write_file does not match expected"));
-                return Err(anyhow!("Call to write_file does not match expected"));
-            }
-            expected.2
-        }
-
-        fn read_file(&mut self, path: &Path) -> anyhow::Result<Option<Vec<u8>>> {
-            // Impolite to panic inside luau, so instead we error and add a failure message to the mock.
-            let Some(expected) = self.read_calls.pop() else {
-                self.errors
-                    .push(format!("Call to read_file when expected calls is empty"));
-                return Err(anyhow!("Call to read_file when expected calls is empty"));
-            };
-            if path != expected.0 {
-                self.errors
-                    .push(format!("Call to read_file does not match expected"));
-                return Err(anyhow!("Call to read_file does not match expected"));
-            }
-            expected.1
-        }
-
-        fn get_metadata(&mut self, path: &Path, key: &str) -> anyhow::Result<Option<String>> {
-            todo!()
-        }
-
-        fn set_metadata(&mut self, path: &Path, key: &str, value: &str) -> anyhow::Result<()> {
-            todo!()
-        }
-
-        fn get_event_group(&self) -> Option<crate::events::EventGroup> {
-            todo!()
-        }
-
-        fn ai_query(&mut self, query: &str) -> anyhow::Result<String> {
-            // Impolite to panic inside luau, so instead we error and add a failure message to the mock.
-            let Some(expected) = self.ai_query_calls.pop() else {
-                self.errors
-                    .push(format!("Call to ai_query when expected calls is empty"));
-                return Err(anyhow!("Call to ai_query when expected calls is empty"));
-            };
-            if query != expected.0 {
-                self.errors
-                    .push(format!("Call to read_file does not match expected"));
-                return Err(anyhow!("Call to read_file does not match expected"));
-            }
-            expected.1
+        impl Bridge for Bridge {
+            fn write_file(&mut self, path: &Path, value: &[u8]) -> anyhow::Result<()>;
+            fn read_file(&mut self, path: &Path) -> anyhow::Result<Option<Vec<u8>>>;
+            fn get_metadata(&mut self, path: &Path, key: &str) -> anyhow::Result<Option<String>>;
+            fn set_metadata(&mut self, path: &Path, key: &str, value: &str) -> anyhow::Result<()>;
+            fn ai_query(&mut self, query: &str) -> anyhow::Result<String>;
+            fn get_event_group(&self) -> Option<EventGroup>;
         }
     }
 
@@ -306,7 +211,13 @@ mod tests {
         .unwrap();
 
         let mut mock_bridge = MockBridge::new();
-        mock_bridge.expect_write_file("someplace/foo.txt", b"some content", Ok(()));
+        mock_bridge
+            .expect_write_file()
+            .with(
+                predicate::eq(PathBuf::from("someplace/foo.txt")),
+                predicate::eq(b"some content".to_vec()),
+            )
+            .returning(|_, _| Ok(()));
 
         let mock_bridge = Arc::new(Mutex::new(mock_bridge));
         let fs = Arc::new(Mutex::new(fs));
@@ -318,7 +229,7 @@ mod tests {
         )
         .unwrap();
 
-        mock_bridge.lock().unwrap().check();
+        mock_bridge.lock().unwrap().checkpoint();
     }
 
     #[test]
@@ -332,11 +243,13 @@ mod tests {
         .unwrap();
 
         let mut mock_bridge = MockBridge::new();
-        mock_bridge.expect_write_file(
-            "someplace/foo.txt",
-            b"some content",
-            Err(anyhow!("Write Failure")),
-        );
+        mock_bridge
+            .expect_write_file()
+            .with(
+                predicate::eq(PathBuf::from("someplace/foo.txt")),
+                predicate::eq(b"some content".to_vec()),
+            )
+            .returning(|_, _| Err(anyhow!("Write Failure")));
 
         let mock_bridge = Arc::new(Mutex::new(mock_bridge));
         let fs = Arc::new(Mutex::new(fs));
@@ -348,7 +261,7 @@ mod tests {
         );
         assert!(result.is_err());
 
-        mock_bridge.lock().unwrap().check();
+        mock_bridge.lock().unwrap().checkpoint();
     }
 
     #[test]
@@ -362,7 +275,10 @@ mod tests {
         .unwrap();
 
         let mut mock_bridge = MockBridge::new();
-        mock_bridge.expect_read_file("someplace/foo.txt", Ok(Some(b"some content".to_vec())));
+        mock_bridge
+            .expect_read_file()
+            .with(predicate::eq(PathBuf::from("someplace/foo.txt")))
+            .returning(|_| Ok(Some(b"some content".to_vec())));
 
         let mock_bridge = Arc::new(Mutex::new(mock_bridge));
         let fs = Arc::new(Mutex::new(fs));
@@ -380,7 +296,7 @@ mod tests {
         //       Tricky bit about this is working out how to hook it up to `run_script`
         //
 
-        mock_bridge.lock().unwrap().check();
+        mock_bridge.lock().unwrap().checkpoint();
     }
 
     #[test]
@@ -394,7 +310,10 @@ mod tests {
         .unwrap();
 
         let mut mock_bridge = MockBridge::new();
-        mock_bridge.expect_read_file("someplace/foo.txt", Ok(None));
+        mock_bridge
+            .expect_read_file()
+            .with(predicate::eq(PathBuf::from("someplace/foo.txt")))
+            .returning(|_| Ok(None));
 
         let mock_bridge = Arc::new(Mutex::new(mock_bridge));
         let fs = Arc::new(Mutex::new(fs));
@@ -406,7 +325,7 @@ mod tests {
         )
         .unwrap();
 
-        mock_bridge.lock().unwrap().check();
+        mock_bridge.lock().unwrap().checkpoint();
     }
 
     #[test]
@@ -420,7 +339,10 @@ mod tests {
         .unwrap();
 
         let mut mock_bridge = MockBridge::new();
-        mock_bridge.expect_read_file("someplace/foo.txt", Err(anyhow!("Read Failure")));
+        mock_bridge
+            .expect_read_file()
+            .with(predicate::eq(PathBuf::from("someplace/foo.txt")))
+            .returning(|_| Err(anyhow!("Read Failure")));
 
         let mock_bridge = Arc::new(Mutex::new(mock_bridge));
         let fs = Arc::new(Mutex::new(fs));
@@ -432,7 +354,7 @@ mod tests {
         );
         assert!(result.is_err());
 
-        mock_bridge.lock().unwrap().check();
+        mock_bridge.lock().unwrap().checkpoint();
     }
 
     #[test]
@@ -462,10 +384,10 @@ mod tests {
         .unwrap();
 
         let mut mock_bridge = MockBridge::new();
-        mock_bridge.expect_ai_query(
-            "Tell me a fun story",
-            Ok("There once was a fish".to_string()),
-        );
+        mock_bridge
+            .expect_ai_query()
+            .with(predicate::eq("Tell me a fun story".to_string()))
+            .returning(|_| Ok("There once was a fish".to_string()));
 
         let mock_bridge = Arc::new(Mutex::new(mock_bridge));
         let fs = Arc::new(Mutex::new(fs));
@@ -485,7 +407,7 @@ mod tests {
             vec!["There once was a fish"]
         );
 
-        mock_bridge.lock().unwrap().check();
+        mock_bridge.lock().unwrap().checkpoint();
     }
 
     #[test]
@@ -505,7 +427,10 @@ mod tests {
         .unwrap();
 
         let mut mock_bridge = MockBridge::new();
-        mock_bridge.expect_ai_query("Tell me a fun story", Err(anyhow!("Network is tofu")));
+        mock_bridge
+            .expect_ai_query()
+            .with(predicate::eq("Tell me a fun story".to_string()))
+            .returning(|_| Err(anyhow!("Network is tofu")));
 
         let mock_bridge = Arc::new(Mutex::new(mock_bridge));
         let fs = Arc::new(Mutex::new(fs));
@@ -521,6 +446,6 @@ mod tests {
         assert!(result.is_err());
         assert!(test_values.lock().unwrap().is_empty());
 
-        mock_bridge.lock().unwrap().check();
+        mock_bridge.lock().unwrap().checkpoint();
     }
 }
