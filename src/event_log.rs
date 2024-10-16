@@ -245,3 +245,41 @@ impl DummyEventLog {
         }
     }
 }
+
+#[cfg(test)]
+pub mod test_utils {
+    use super::*;
+    use mockall::mock;
+
+    mock! {
+        pub EventLog {}
+
+        impl EventLog for EventLog {
+            fn get_last_write_event(&self, p: &Path) -> anyhow::Result<Option<Event>>;
+            fn get_file_history(&self, p: &Path) -> anyhow::Result<Vec<Event>>;
+            fn get_event_group(&self, group_id: u64) -> anyhow::Result<Option<EventGroup>>;
+            fn add_event_group(&mut self, group: &EventGroup) -> anyhow::Result<EventGroup>;
+        }
+    }
+}
+
+#[cfg(test)]
+pub mod test {
+    use std::path::PathBuf;
+
+    use super::{test_utils::MockEventLog, EventLog};
+
+    pub fn check_mocking_works() {
+        let mut event_log = MockEventLog::default();
+        event_log
+            .expect_get_last_write_event()
+            .returning(|p| Ok(None));
+
+        assert_eq!(
+            event_log
+                .get_last_write_event(&PathBuf::from("hello"))
+                .unwrap(),
+            None
+        );
+    }
+}

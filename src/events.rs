@@ -4,7 +4,7 @@ use crate::binary16::ContentHash;
 use crate::metadata::MetadataEntry;
 use crate::metadata::MetadataKey;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Event {
     pub id: u64,
     pub group_id: u64,
@@ -18,7 +18,7 @@ impl Event {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum EventType {
     WriteFile(WriteFileEvent),
     ReadFile(ReadFileEvent),
@@ -27,7 +27,7 @@ pub enum EventType {
 }
 
 // Can actually represent create/modify/delete
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct WriteFileEvent {
     pub path: PathBuf,
     pub before_hash: Option<ContentHash>,
@@ -35,20 +35,20 @@ pub struct WriteFileEvent {
 }
 
 // When called on a missing file, hash=None
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ReadFileEvent {
     pub path: PathBuf,
     pub hash: Option<ContentHash>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct GetMetadataEvent {
     pub path: PathBuf,
     pub key: MetadataKey,
     pub value: Option<MetadataEntry>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct SetMetadataEvent {
     pub path: PathBuf,
     pub key: MetadataKey,

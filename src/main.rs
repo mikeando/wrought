@@ -29,7 +29,6 @@ use llm::{InvalidLLM, OpenAILLM, LLM};
 use metadata::MetadataEntry;
 use metadata::MetadataKey;
 use scripting_luau::run_script;
-use serde_json::json;
 use xfs::Xfs;
 
 pub struct Wrought {
@@ -281,7 +280,7 @@ fn cmd_init(cmd: &InitCmd) -> anyhow::Result<()> {
         .unwrap()
         .writer(&path.join(".wrought").join("settings.toml"))?;
     writer.write_all(
-        vec![
+        [
             "# General Project Settings",
             "",
             "# LLM Settings",
@@ -509,7 +508,7 @@ pub fn create_backend(path: &Path) -> anyhow::Result<Arc<Mutex<dyn Backend>>> {
         content_storage_path,
     )));
     Ok(Arc::new(Mutex::new(DummyBackend {
-        fs: fs,
+        fs,
         root: path,
         content_store,
     })))
@@ -638,7 +637,7 @@ fn get_absolute_project_and_relative_file(
 }
 
 fn cmd_history(
-    cmd: HistoryCmd,
+    _cmd: HistoryCmd,
     fs: Arc<Mutex<dyn xfs::Xfs>>,
     event_log: Arc<Mutex<dyn EventLog>>,
     project_root: &Path,
@@ -665,8 +664,8 @@ fn cmd_history(
                 );
                 last_write_hash = write_file_event.after_hash;
             }
-            EventType::ReadFile(read_file_event) => {}
-            EventType::GetMetadata(get_metadata_event) => {}
+            EventType::ReadFile(_read_file_event) => {}
+            EventType::GetMetadata(_get_metadata_event) => {}
             EventType::SetMetadata(set_metadata_event) => eprint!("{:?}", set_metadata_event),
         }
     }

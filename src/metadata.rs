@@ -1,4 +1,4 @@
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum MetadataKey {
     StringKey(String),
 }
@@ -17,7 +17,7 @@ impl From<&str> for MetadataKey {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct MetadataEntry {
     value: String,
 }
