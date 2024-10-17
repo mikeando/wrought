@@ -14,10 +14,10 @@ pub mod bridge;
 pub mod content_store;
 pub mod event_log;
 pub mod events;
+pub mod file_history;
 pub mod fs_utils;
 pub mod llm;
 pub mod metadata;
-pub mod mock;
 pub mod scripting_luau;
 
 use binary16::ContentHash;
@@ -26,6 +26,7 @@ use event_log::{DummyEventLog, EventLog};
 use events::{Event, EventGroup};
 use events::{EventType, GetMetadataEvent, SetMetadataEvent, WriteFileEvent};
 
+use file_history::FileHistoryEntry;
 use llm::{InvalidLLM, OpenAILLM, LLM};
 use metadata::MetadataEntry;
 use metadata::MetadataKey;
@@ -644,46 +645,19 @@ fn cmd_history(
     project_root: &Path,
     file_path: &Path,
 ) -> anyhow::Result<()> {
-    let events = event_log.lock().unwrap().get_file_history(file_path)?;
-    let fmt_opt_hash = |h: &Option<ContentHash>| -> String {
-        h.as_ref()
-            .map(|h| h.to_string())
-            .unwrap_or("nothing".to_string())
-    };
-    let mut last_write_hash = None;
-    for e in events {
-        match e.event_type {
-            EventType::WriteFile(write_file_event) => {
-                if write_file_event.before_hash != last_write_hash {
-                    eprintln!("- {} : ???", fmt_opt_hash(&write_file_event.before_hash));
-                }
-                let group = event_log.lock().unwrap().get_event_group(e.group_id)?;
-                eprintln!(
-                    "+ {} : {}",
-                    fmt_opt_hash(&write_file_event.after_hash),
-                    group.unwrap().command
-                );
-                last_write_hash = write_file_event.after_hash;
+    let entries = file_history::file_history(fs, event_log, project_root, file_path)?;
+    for e in entries {
+        match e {
+            FileHistoryEntry::Deleted => eprintln!("- nothing"),
+            FileHistoryEntry::DeletedBy(cmd) => eprintln!("+ nothing : {}", cmd.0),
+            FileHistoryEntry::UnknownHash(hash) => eprintln!("- {} : ???", hash.to_string()),
+            FileHistoryEntry::StoredHash(hash, cmd) => {
+                eprintln!("+ {} : {}", hash.to_string(), cmd.0)
             }
-            EventType::ReadFile(_read_file_event) => {}
-            EventType::GetMetadata(_get_metadata_event) => {}
-            EventType::SetMetadata(set_metadata_event) => eprint!("{:?}", set_metadata_event),
+            FileHistoryEntry::LocalChanges(hash) => {
+                eprintln!("- {} : local changes", hash.to_string())
+            }
         }
-    }
-    // Now check the actual file
-    let cur_hash = if let Some(mut reader) = fs
-        .lock()
-        .unwrap()
-        .reader_if_exists(&project_root.join(file_path))?
-    {
-        let mut buf = vec![];
-        reader.read_to_end(&mut buf)?;
-        Some(ContentHash::from_content(&buf))
-    } else {
-        None
-    };
-    if cur_hash != last_write_hash {
-        eprintln!("- {} : local changes", fmt_opt_hash(&cur_hash))
     }
     Ok(())
 }
