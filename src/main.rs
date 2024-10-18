@@ -4,8 +4,8 @@ use std::{
 };
 
 use anyhow::{anyhow, bail, Context};
-use backend::{Backend, DummyBackend};
-use bridge::{Bridge, DummyBridge};
+use backend::{Backend, SimpleBackend};
+use bridge::{Bridge, SimpleBridge};
 use clap::{Parser, Subcommand};
 
 pub mod backend;
@@ -21,8 +21,8 @@ pub mod metadata;
 pub mod scripting_luau;
 
 use binary16::ContentHash;
-use content_store::{ContentStore, DummyContentStore};
-use event_log::{DummyEventLog, EventLog};
+use content_store::{ContentStore, FileSystemContentStore};
+use event_log::{EventLog, SQLiteEventLog};
 use events::{Event, EventGroup};
 use events::{EventType, GetMetadataEvent, SetMetadataEvent, WriteFileEvent};
 
@@ -305,7 +305,7 @@ fn cmd_init(cmd: &InitCmd) -> anyhow::Result<()> {
         .unwrap()
         .create_dir_all(&path.join(".wrought"))
         .unwrap();
-    DummyEventLog::init(path.join(".wrought").join("wrought.db")).unwrap();
+    SQLiteEventLog::init(path.join(".wrought").join("wrought.db")).unwrap();
     fs.lock()
         .unwrap()
         .create_dir_all(&project_package_dir)
@@ -505,11 +505,11 @@ pub fn create_backend(path: &Path) -> anyhow::Result<Arc<Mutex<dyn Backend>>> {
     let fs = Arc::new(Mutex::new(xfs::OsFs {}));
     let path = fs.lock().unwrap().canonicalize(path)?;
     let content_storage_path = path.join("_content");
-    let content_store = Arc::new(Mutex::new(DummyContentStore::new(
+    let content_store = Arc::new(Mutex::new(FileSystemContentStore::new(
         fs.clone(),
         content_storage_path,
     )));
-    Ok(Arc::new(Mutex::new(DummyBackend {
+    Ok(Arc::new(Mutex::new(SimpleBackend {
         fs,
         root: path,
         content_store,
@@ -518,7 +518,7 @@ pub fn create_backend(path: &Path) -> anyhow::Result<Arc<Mutex<dyn Backend>>> {
 
 pub fn create_event_log(path: &Path) -> anyhow::Result<Arc<Mutex<dyn EventLog>>> {
     Ok(Arc::new(Mutex::new(
-        DummyEventLog::open(path.join(".wrought").join("wrought.db")).unwrap(),
+        SQLiteEventLog::open(path.join(".wrought").join("wrought.db")).unwrap(),
     )))
 }
 
@@ -565,7 +565,7 @@ pub fn create_bridge(path: &Path) -> anyhow::Result<Arc<Mutex<dyn Bridge>>> {
         }
     };
 
-    Ok(Arc::new(Mutex::new(DummyBridge {
+    Ok(Arc::new(Mutex::new(SimpleBridge {
         root,
         backend,
         event_group: EventGroup::empty(),
@@ -778,7 +778,7 @@ fn main() {
             };
 
             let content_storage_path = project_root.join("_content");
-            let content_store = Arc::new(Mutex::new(DummyContentStore::new(
+            let content_store = Arc::new(Mutex::new(FileSystemContentStore::new(
                 fs.clone(),
                 content_storage_path,
             )));

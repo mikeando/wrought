@@ -10,21 +10,21 @@ pub trait ContentStore {
     fn retrieve(&self, hash: ContentHash) -> anyhow::Result<Option<Vec<u8>>>;
 }
 
-pub struct DummyContentStore {
+pub struct FileSystemContentStore {
     fs: Arc<Mutex<dyn xfs::Xfs>>,
     storage_path: PathBuf,
 }
 
-impl DummyContentStore {
+impl FileSystemContentStore {
     pub fn new(
         fs: Arc<Mutex<dyn xfs::Xfs>>,
         storage_path: std::path::PathBuf,
-    ) -> DummyContentStore {
+    ) -> FileSystemContentStore {
         Self { fs, storage_path }
     }
 }
 
-impl ContentStore for DummyContentStore {
+impl ContentStore for FileSystemContentStore {
     fn store(&mut self, value: &[u8]) -> anyhow::Result<ContentHash> {
         let hash = ContentHash::from_content(value);
         let path = self.storage_path.join(hash.to_string());
@@ -54,9 +54,9 @@ pub mod tests {
 
     use crate::binary16::ContentHash;
 
-    use super::{ContentStore, DummyContentStore};
+    use super::{ContentStore, FileSystemContentStore};
 
-    fn simple_test_case() -> (Arc<Mutex<xfs::mockfs::MockFS>>, DummyContentStore) {
+    fn simple_test_case() -> (Arc<Mutex<xfs::mockfs::MockFS>>, FileSystemContentStore) {
         use xfs::Xfs;
 
         let mut fs = xfs::mockfs::MockFS::new();
@@ -64,7 +64,7 @@ pub mod tests {
         fs.create_dir_all(&storage_path).unwrap();
 
         let fs = Arc::new(Mutex::new(fs));
-        let store = DummyContentStore::new(fs.clone(), storage_path);
+        let store = FileSystemContentStore::new(fs.clone(), storage_path);
         (fs, store)
     }
 

@@ -23,12 +23,12 @@ pub trait EventLog {
 ///
 /// TODO: Maybe it belongs in it's own file?
 
-pub struct DummyEventLog {
+pub struct SQLiteEventLog {
     conn: rusqlite::Connection,
 }
 
-impl DummyEventLog {
-    pub fn open<P: AsRef<Path>>(path: P) -> anyhow::Result<DummyEventLog> {
+impl SQLiteEventLog {
+    pub fn open<P: AsRef<Path>>(path: P) -> anyhow::Result<SQLiteEventLog> {
         use rusqlite::OpenFlags;
         //TODO: Move the conn into the instance.
         let conn = rusqlite::Connection::open_with_flags(
@@ -37,11 +37,11 @@ impl DummyEventLog {
                 | OpenFlags::SQLITE_OPEN_URI
                 | OpenFlags::SQLITE_OPEN_NO_MUTEX,
         )?;
-        Ok(DummyEventLog { conn })
+        Ok(SQLiteEventLog { conn })
     }
 }
 
-impl EventLog for DummyEventLog {
+impl EventLog for SQLiteEventLog {
     fn get_last_write_event(&self, p: &Path) -> anyhow::Result<Option<Event>> {
         let mut stmt = self.conn.prepare("SELECT * FROM Events WHERE action_type='write' AND file_path=?1 ORDER BY id DESC LIMIT 1")?;
         let mut events = stmt.query([format!("{}", p.display())])?;
@@ -109,7 +109,7 @@ impl EventLog for DummyEventLog {
     }
 }
 
-impl DummyEventLog {
+impl SQLiteEventLog {
     pub fn init<P: AsRef<Path>>(path: P) -> anyhow::Result<()> {
         // For now we swallow errors if we cant remove the file.
         if path.as_ref().exists() {

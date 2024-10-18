@@ -15,5 +15,9 @@ backend. These should be named correctly
 
 ## Issue log
 
-* [ ] Identify all the dummy classes
-* [ ] Rename each class.
+* [X] Identify all the dummy classes
+* [X] Rename each class.
+  * [X] DummyBackend -> SimpleBackend
+  * [X] DummyEventLog -> SQLiteEventLog
+  * [X] DummyBridge -> SimpleBridge
+  * [X] DummyContentStore -> FileSystemContentStore

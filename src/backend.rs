@@ -40,19 +40,18 @@ pub trait Backend {
 
 // -----------------
 
-pub struct DummyBackend {
+pub struct SimpleBackend {
     pub fs: Arc<Mutex<dyn xfs::Xfs>>,
     pub root: PathBuf,
     pub content_store: Arc<Mutex<dyn ContentStore>>,
 }
 
-impl Backend for DummyBackend {
+impl Backend for SimpleBackend {
     fn get_metadata(
         &self,
         path: &Path,
         key: &MetadataKey,
     ) -> anyhow::Result<Option<MetadataEntry>> {
-        eprintln!("DummyBackend::get_metadata({:?}, {:?})", path, key);
         let md_path = self.root.join(".wrought").join("metadata.json");
         let md_store: BTreeMap<String, BTreeMap<String, String>> =
             match self.fs.lock().unwrap().reader_if_exists(&md_path)? {
@@ -72,10 +71,6 @@ impl Backend for DummyBackend {
         key: &MetadataKey,
         value: &Option<MetadataEntry>,
     ) -> anyhow::Result<Option<MetadataEntry>> {
-        eprintln!(
-            "DummyBackend::set_metadata({:?}, {:?}, {:?})",
-            path, key, value
-        );
         let md_path = self.root.join(".wrought").join("metadata.json");
         let mut md_store: BTreeMap<String, BTreeMap<String, String>> =
             match self.fs.lock().unwrap().reader_if_exists(&md_path)? {
@@ -105,10 +100,6 @@ impl Backend for DummyBackend {
 
         let writer = self.fs.lock().unwrap().writer(&md_path)?;
         serde_json::to_writer_pretty(writer, &md_store)?;
-        eprintln!(
-            "DONE DummyBackend::set_metadata({:?}, {:?}, {:?}) -> {:?}",
-            path, key, value, original
-        );
         Ok(original)
     }
 
@@ -117,12 +108,6 @@ impl Backend for DummyBackend {
         path: &Path,
         value: &[u8],
     ) -> anyhow::Result<(Option<ContentHash>, ContentHash)> {
-        eprintln!(
-            "DummyBackend::write_file({:?}, {:?})",
-            path,
-            String::from_utf8_lossy(value).to_string()
-        );
-
         let p = self.root.join(path);
 
         // Check if the file exists
@@ -149,7 +134,6 @@ impl Backend for DummyBackend {
     }
 
     fn read_file(&self, path: &Path) -> anyhow::Result<Option<(ContentHash, Vec<u8>)>> {
-        eprintln!("DummyBackend::read_file({:?})", path);
         let p = self.root.join(path);
         // Check if the file exists
         let original_and_hash = match self.fs.lock().unwrap().reader_if_exists(&p)? {

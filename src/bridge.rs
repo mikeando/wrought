@@ -21,7 +21,7 @@ pub trait Bridge {
     fn get_event_group(&self) -> Option<EventGroup>;
 }
 
-pub struct DummyBridge {
+pub struct SimpleBridge {
     pub backend: Arc<Mutex<dyn Backend>>,
     // pub event_log: Arc<Mutex< dyn EventLog >>,
     pub llm: Arc<Mutex<dyn LLM>>,
@@ -30,7 +30,7 @@ pub struct DummyBridge {
     pub event_group: EventGroup,
 }
 
-impl Bridge for DummyBridge {
+impl Bridge for SimpleBridge {
     fn write_file(&mut self, path: &Path, value: &[u8]) -> anyhow::Result<()> {
         let (before_hash, hash) = self.backend.lock().unwrap().write_file(path, value)?;
         let after_hash = Some(hash);
@@ -96,7 +96,7 @@ impl Bridge for DummyBridge {
     }
 }
 
-impl DummyBridge {
+impl SimpleBridge {
     pub fn add_event(&mut self, event: Event) {
         self.event_group.events.push(event);
     }
