@@ -273,7 +273,7 @@ pub mod test {
         let mut event_log = MockEventLog::default();
         event_log
             .expect_get_last_write_event()
-            .returning(|p| Ok(None));
+            .returning(|_| Ok(None));
 
         assert_eq!(
             event_log
