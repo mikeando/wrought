@@ -3,6 +3,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+
 use crate::{binary16::ContentHash, event_log::EventLog, events::EventType};
 
 #[derive(Debug, PartialEq)]
@@ -79,10 +80,10 @@ pub fn file_history(
 #[cfg(test)]
 pub mod test {
     use std::{
-        io::Cursor,
-        path::PathBuf,
-        sync::{Arc, Mutex},
+        any, io::Cursor, path::PathBuf, sync::{Arc, Mutex}
     };
+
+    use anyhow::anyhow;
 
     use mockall::{mock, predicate};
 
@@ -143,11 +144,43 @@ pub mod test {
                 .with(predicate::eq(path.into()))
                 .returning(move |_| Ok(None));
         }
+
+        pub fn with_read_error<P: Into<PathBuf>, F>(&mut self, path: P, f: F) 
+        where F: Fn() -> xfs::XfsError + Send + 'static
+        {
+            self.expect_reader_if_exists()
+            .with(predicate::eq(path.into()))
+            .returning(move |_| Err(f()));
+        }
     }
 
     #[test]
     pub fn untracked_nonexistant_file() {
-        todo!()
+        let mut fs = MockFs::default();
+        let mut event_log = MockEventLog::default();
+
+        let project_root = PathBuf::from("project_root");
+        let file_path = PathBuf::from("no_such_file.txt");
+
+        fs.with_missing_read(project_root.join(&file_path));
+
+        event_log
+            .expect_get_file_history()
+            .with(predicate::eq(file_path.clone()))
+            .returning(move |_| Ok(vec![]));
+
+        let fs = Arc::new(Mutex::new(fs));
+        let event_log = Arc::new(Mutex::new(event_log));
+        let history =
+            file_history(fs.clone(), event_log.clone(), &project_root, &file_path).unwrap();
+
+        assert_eq!(
+            history,
+            vec![]
+        );
+
+        fs.lock().unwrap().checkpoint();
+        event_log.lock().unwrap().checkpoint();
     }
 
     #[test]
@@ -262,22 +295,62 @@ pub mod test {
     }
 
     #[test]
-    pub fn called_on_directory() {
-        todo!();
-    }
-
-    #[test]
-    pub fn file_became_directory() {
-        todo!();
-    }
-
-    #[test]
     pub fn handles_filesystem_error() {
-        todo!();
+        let mut fs = MockFs::default();
+        let mut event_log = MockEventLog::default();
+
+        let project_root = PathBuf::from("project_root");
+        let file_path = PathBuf::from("tofu.txt");
+
+        fs.with_read_error(project_root.join(&file_path), || xfs::XfsError::UnspecifiedError("Filesystem is a teapot".to_string()));
+
+        event_log
+            .expect_get_file_history()
+            .with(predicate::eq(file_path.clone()))
+            .returning(move |_| Ok(vec![]));
+
+        let fs = Arc::new(Mutex::new(fs));
+        let event_log = Arc::new(Mutex::new(event_log));
+        let history =
+            file_history(fs.clone(), event_log.clone(), &project_root, &file_path);
+
+        let e = history.err().unwrap();
+
+        assert_eq!(
+            format!("{}", e.to_string()),
+            "unspecified error: Filesystem is a teapot",
+        );
+
+        fs.lock().unwrap().checkpoint();
+        event_log.lock().unwrap().checkpoint();
     }
 
     #[test]
     pub fn handles_event_log_errors() {
-        todo!();
+        let mut fs = MockFs::default();
+        let mut event_log = MockEventLog::default();
+
+        let project_root = PathBuf::from("project_root");
+        let file_path = PathBuf::from("tofu.txt");
+
+        event_log
+            .expect_get_file_history()
+            .with(predicate::eq(file_path.clone()))
+            .returning(move |_| Err(anyhow!("Event Log chopped down...")));
+
+        let fs = Arc::new(Mutex::new(fs));
+        let event_log = Arc::new(Mutex::new(event_log));
+        let history =
+            file_history(fs.clone(), event_log.clone(), &project_root, &file_path);
+
+        let e = history.err().unwrap();
+
+        assert_eq!(
+            format!("{}", e.to_string()),
+            "Event Log chopped down...",
+        );
+
+        fs.lock().unwrap().checkpoint();
+        event_log.lock().unwrap().checkpoint();
     }
 }
