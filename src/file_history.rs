@@ -3,7 +3,6 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-
 use crate::{binary16::ContentHash, event_log::EventLog, events::EventType};
 
 #[derive(Debug, PartialEq)]
@@ -80,7 +79,10 @@ pub fn file_history(
 #[cfg(test)]
 pub mod test {
     use std::{
-        any, io::Cursor, path::PathBuf, sync::{Arc, Mutex}
+        any,
+        io::Cursor,
+        path::PathBuf,
+        sync::{Arc, Mutex},
     };
 
     use anyhow::anyhow;
@@ -145,12 +147,13 @@ pub mod test {
                 .returning(move |_| Ok(None));
         }
 
-        pub fn with_read_error<P: Into<PathBuf>, F>(&mut self, path: P, f: F) 
-        where F: Fn() -> xfs::XfsError + Send + 'static
+        pub fn with_read_error<P: Into<PathBuf>, F>(&mut self, path: P, f: F)
+        where
+            F: Fn() -> xfs::XfsError + Send + 'static,
         {
             self.expect_reader_if_exists()
-            .with(predicate::eq(path.into()))
-            .returning(move |_| Err(f()));
+                .with(predicate::eq(path.into()))
+                .returning(move |_| Err(f()));
         }
     }
 
@@ -174,10 +177,7 @@ pub mod test {
         let history =
             file_history(fs.clone(), event_log.clone(), &project_root, &file_path).unwrap();
 
-        assert_eq!(
-            history,
-            vec![]
-        );
+        assert_eq!(history, vec![]);
 
         fs.lock().unwrap().checkpoint();
         event_log.lock().unwrap().checkpoint();
@@ -302,7 +302,9 @@ pub mod test {
         let project_root = PathBuf::from("project_root");
         let file_path = PathBuf::from("tofu.txt");
 
-        fs.with_read_error(project_root.join(&file_path), || xfs::XfsError::UnspecifiedError("Filesystem is a teapot".to_string()));
+        fs.with_read_error(project_root.join(&file_path), || {
+            xfs::XfsError::UnspecifiedError("Filesystem is a teapot".to_string())
+        });
 
         event_log
             .expect_get_file_history()
@@ -311,8 +313,7 @@ pub mod test {
 
         let fs = Arc::new(Mutex::new(fs));
         let event_log = Arc::new(Mutex::new(event_log));
-        let history =
-            file_history(fs.clone(), event_log.clone(), &project_root, &file_path);
+        let history = file_history(fs.clone(), event_log.clone(), &project_root, &file_path);
 
         let e = history.err().unwrap();
 
@@ -340,15 +341,11 @@ pub mod test {
 
         let fs = Arc::new(Mutex::new(fs));
         let event_log = Arc::new(Mutex::new(event_log));
-        let history =
-            file_history(fs.clone(), event_log.clone(), &project_root, &file_path);
+        let history = file_history(fs.clone(), event_log.clone(), &project_root, &file_path);
 
         let e = history.err().unwrap();
 
-        assert_eq!(
-            format!("{}", e.to_string()),
-            "Event Log chopped down...",
-        );
+        assert_eq!(format!("{}", e.to_string()), "Event Log chopped down...",);
 
         fs.lock().unwrap().checkpoint();
         event_log.lock().unwrap().checkpoint();

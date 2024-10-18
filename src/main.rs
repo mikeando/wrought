@@ -416,7 +416,7 @@ impl PackageDirectory {
     fn packages(&self, fs: &dyn xfs::Xfs) -> Vec<anyhow::Result<Package>> {
         let mut result = vec![];
 
-        let mut f = |fs: &dyn Xfs, entry: &dyn xfs::XfsDirEntry| -> anyhow::Result<()> {
+        let mut f = |_fs: &dyn Xfs, entry: &dyn xfs::XfsDirEntry| -> anyhow::Result<()> {
             let md = match entry.metadata() {
                 Err(e) => {
                     result.push(
@@ -650,12 +650,12 @@ fn cmd_history(
         match e {
             FileHistoryEntry::Deleted => eprintln!("- nothing"),
             FileHistoryEntry::DeletedBy(cmd) => eprintln!("+ nothing : {}", cmd.0),
-            FileHistoryEntry::UnknownHash(hash) => eprintln!("- {} : ???", hash.to_string()),
+            FileHistoryEntry::UnknownHash(hash) => eprintln!("- {} : ???", hash),
             FileHistoryEntry::StoredHash(hash, cmd) => {
-                eprintln!("+ {} : {}", hash.to_string(), cmd.0)
+                eprintln!("+ {} : {}", hash, cmd.0)
             }
             FileHistoryEntry::LocalChanges(hash) => {
-                eprintln!("- {} : local changes", hash.to_string())
+                eprintln!("- {} : local changes", hash)
             }
         }
     }
