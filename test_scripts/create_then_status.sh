@@ -21,6 +21,11 @@ ${wrought} file-status "${PROJECT_DIR}/outline.md"
 echo "CHANGING outline.md CONTENT"
 echo "New Content" > $PROJECT_DIR/outline.md
 
+echo "Untracked Content" > $PROJECT_DIR/untracked.md
+
+${wrought} --project-root="$PROJECT_DIR" status --color
+
+
 echo "RERUNNING file-status on outline.md"
 ${wrought} file-status "${PROJECT_DIR}/outline.md"
 

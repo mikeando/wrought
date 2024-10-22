@@ -1,4 +1,6 @@
 use std::{
+    borrow::Cow,
+    iter::repeat,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
 };
@@ -18,6 +20,7 @@ pub mod file_history;
 pub mod fs_utils;
 pub mod llm;
 pub mod metadata;
+pub mod project_status;
 pub mod scripting_luau;
 
 use binary16::ContentHash;
@@ -30,7 +33,9 @@ use file_history::FileHistoryEntry;
 use llm::{InvalidLLM, OpenAILLM, LLM};
 use metadata::MetadataEntry;
 use metadata::MetadataKey;
+use project_status::get_project_status;
 use scripting_luau::run_script;
+use serde::{Deserialize, Serialize};
 use xfs::Xfs;
 
 pub struct Wrought {
@@ -184,7 +189,10 @@ struct InitCmd {
 }
 
 #[derive(Debug, Parser)]
-struct StatusCmd {}
+struct StatusCmd {
+    #[arg(long, default_value = "false")]
+    color: bool,
+}
 
 #[derive(Debug, Parser)]
 struct FileStatusCmd {
@@ -348,59 +356,86 @@ fn cmd_init(cmd: &InitCmd) -> anyhow::Result<()> {
 }
 
 #[derive(Debug)]
-struct PackageStatus {
+struct PackageStatusEntry {
     path: PathBuf,
-    content: String,
+    title: String,
+    status: String,
+    next_steps: Vec<String>,
 }
 
-impl PackageStatus {
-    pub fn read_from(fs: &dyn xfs::Xfs, p: &Path) -> anyhow::Result<PackageStatus> {
+#[derive(Serialize, Deserialize, Debug, Clone)]
+struct PackageStatusEntryRepr {
+    title: String,
+    status: String,
+    next_steps: Vec<String>,
+}
+
+impl PackageStatusEntry {
+    pub fn read_from(fs: &dyn xfs::Xfs, p: &Path) -> anyhow::Result<PackageStatusEntry> {
         let mut content = String::new();
         fs.reader(p)?.read_to_string(&mut content)?;
-        Ok(PackageStatus {
+        let content: PackageStatusEntryRepr = toml::from_str(&content)?;
+
+        Ok(PackageStatusEntry {
             path: p.to_path_buf(),
-            content,
+            title: content.title,
+            status: content.status,
+            next_steps: content.next_steps,
         })
+    }
+
+    pub fn name(&self) -> String {
+        self.path.file_name().unwrap().to_string_lossy().to_string()
     }
 }
 
+#[derive(Debug)]
+pub struct PackageStatus {
+    package: Package,
+    entries: Vec<anyhow::Result<PackageStatusEntry>>,
+}
+
+#[derive(Clone, Debug)]
 struct Package {
     path: PathBuf,
 }
 
 impl Package {
-    fn statuses(&self, fs: &dyn xfs::Xfs) -> Vec<anyhow::Result<PackageStatus>> {
+    fn status(&self, fs: &dyn xfs::Xfs) -> PackageStatus {
         let status_dir = self.path.join("status");
-        let mut result = vec![];
+        let mut entries = vec![];
 
         let mut f = |fs: &dyn Xfs, entry: &dyn xfs::XfsDirEntry| -> anyhow::Result<()> {
             let md = match entry.metadata() {
                 Ok(md) => md,
                 Err(e) => {
-                    result.push(
+                    entries.push(
                         Err(e).with_context(|| format!("getting metadata for {:?}", entry.path())),
                     );
                     return Ok(());
                 }
             };
             if !md.is_file() {
-                result.push(Err(anyhow!(
+                entries.push(Err(anyhow!(
                     "status entry {:?} is not a file",
                     entry.path()
                 )));
                 return Ok(());
             }
 
-            result.push(PackageStatus::read_from(fs, &entry.path()));
+            entries.push(PackageStatusEntry::read_from(fs, &entry.path()));
             Ok(())
         };
 
         if let Err(e) = fs.on_each_entry(&status_dir, &mut f) {
-            result.push(
+            entries.push(
                 Err(e).with_context(|| format!("while reading statuses from {:?}", status_dir)),
             );
         }
-        result
+        PackageStatus {
+            package: self.clone(),
+            entries,
+        }
     }
 
     fn name(&self) -> String {
@@ -446,44 +481,172 @@ impl PackageDirectory {
     }
 }
 
-fn cmd_status(project_root: &Path, _cmd: StatusCmd) -> anyhow::Result<()> {
-    let fs = Arc::new(Mutex::new(xfs::OsFs {}));
+struct StatusFormatter {
+    use_color: bool,
+}
 
-    let package_dir = PackageDirectory {
-        path: project_root.join(".wrought").join("packages"),
-    };
-    let packages = package_dir.packages(&*fs.lock().unwrap());
-    for package in packages {
-        match package {
-            Ok(package) => {
-                println!("{}", package.name());
-                println!("---",);
-                for status in package.statuses(&*fs.lock().unwrap()) {
-                    match status {
-                        Ok(status) => {
-                            println!("* {}", status.path.file_name().unwrap().to_string_lossy());
+//TODO: use colored instead?
+const TERM_COLOR_RED: &str = "\x1b[31;1m";
+const TERM_COLOR_GREEN: &str = "\x1b[32;1m";
+const TERM_COLOR_BOLD: &str = "\x1b[1m";
+const TERM_COLOR_RESET: &str = "\x1b[0m";
+const TERM_COLOR_CYAN: &str = "\x1b[36m";
+const TERM_COLOR_MAGENTA: &str = "\x1b[35m";
+const TERM_COLOR_BLUE: &str = "\x1b[34m";
 
-                            let mut content: Vec<_> =
-                                status.content.lines().map(|l| l.trim()).collect();
-                            while let Some(c) = content.last() {
-                                if !c.is_empty() {
-                                    break;
-                                }
-                                content.pop();
-                            }
-                            for line in content {
-                                println!("   | {}", line);
-                            }
-                        }
-                        Err(e) => eprintln!("  * error : {:?}", e),
-                    }
-                }
+impl StatusFormatter {
+    fn maybe_colorise<'a>(&self, message: &'a str, color: &str) -> Cow<'a, str> {
+        if self.use_color {
+            format!("{}{}{}", color, message, TERM_COLOR_RESET).into()
+        } else {
+            message.into()
+        }
+    }
+
+    fn underline_with(&self, message: &str, c: char) {
+        println!("{}", repeat(c).take(message.len()).collect::<String>());
+    }
+
+    fn heading(&self, heading: &str, level: u8) {
+        if level == 1 {
+            println!("{}", self.maybe_colorise(heading, TERM_COLOR_RED));
+            if !self.use_color {
+                self.underline_with(heading, '=');
             }
-            Err(e) => {
-                println!("- package error: {:?}\n", e)
+        } else if level == 2 {
+            println!("{}", self.maybe_colorise(heading, TERM_COLOR_GREEN));
+            if !self.use_color {
+                self.underline_with(heading, '-');
+            }
+        } else if level == 3 {
+            println!("{}", self.maybe_colorise(heading, TERM_COLOR_BOLD));
+        }
+    }
+
+    fn file_deleted(&self, path: &Path) {
+        println!(
+            " {} {}",
+            self.maybe_colorise("--", TERM_COLOR_CYAN),
+            path.display()
+        );
+    }
+
+    fn file_untracked(&self, path: &Path) {
+        println!(
+            " {} {}",
+            self.maybe_colorise("??", TERM_COLOR_CYAN),
+            path.display()
+        );
+    }
+
+    fn file_tracked(&self, path: &Path, is_changed: bool, is_stale: bool) {
+        let changed_str = if is_changed {
+            self.maybe_colorise("C", TERM_COLOR_MAGENTA)
+        } else {
+            " ".into()
+        };
+        let stale_str = if is_stale {
+            self.maybe_colorise("S", TERM_COLOR_MAGENTA)
+        } else {
+            " ".into()
+        };
+        println!(" {}{} {}", changed_str, stale_str, path.display());
+    }
+
+    fn note(&self, message: &str) {
+        self.maybe_colorise(message, TERM_COLOR_BLUE);
+    }
+}
+
+fn cmd_status(project_root: &Path, cmd: StatusCmd) -> anyhow::Result<()> {
+    let fs = Arc::new(Mutex::new(xfs::OsFs {}));
+    let event_log = create_event_log(project_root)?;
+
+    let project_status = get_project_status(
+        &*event_log.lock().unwrap(),
+        &*fs.lock().unwrap(),
+        project_root,
+    )?;
+
+    let fmt = StatusFormatter {
+        use_color: cmd.color,
+    };
+    fmt.heading("Project Status", 1);
+    println!();
+
+    fmt.heading("File Statuses", 2);
+    let mut printed_amnything = false;
+    for f in &project_status.file_statuses {
+        // Skip anything in the .wrought directory orthe content directory
+        // TODO: Move the _content directory into the wrought directory?
+        if f.path.starts_with(".wrought") {
+            continue;
+        }
+        if f.path.starts_with("_content") {
+            continue;
+        }
+
+        match f.status {
+            project_status::FileStatus::Untracked => {
+                fmt.file_untracked(&f.path);
+                printed_amnything = true;
+            }
+            project_status::FileStatus::Deleted => {
+                fmt.file_deleted(&f.path);
+                printed_amnything = true;
+            }
+            project_status::FileStatus::Present {
+                is_changed,
+                is_stale,
+            } => {
+                if !is_changed && !is_stale {
+                    continue;
+                }
+                fmt.file_tracked(&f.path, is_changed, is_stale);
+                printed_amnything = true;
             }
         }
     }
+    if !printed_amnything {
+        fmt.note("(nothing to report)")
+    }
+    println!();
+    fmt.heading("Package Statuses", 2);
+
+    // Now print the statuses of the packages
+    for package_status in &project_status.package_statuses {
+        fmt.heading(&package_status.package.name(), 3);
+        for status in &package_status.entries {
+            match status {
+                Ok(status) => {
+                    println!("* {} [{}]", status.title.trim(), status.name());
+                    println!("  {}", status.status.trim().replace("\n", "\n  "));
+                }
+                Err(e) => println!("* error: {}", e),
+            }
+        }
+    }
+
+    println!();
+    fmt.heading("Next Steps", 2);
+    for package_status in &project_status.package_statuses {
+        fmt.heading(&package_status.package.name(), 3);
+        for status in &package_status.entries {
+            match status {
+                Ok(status) => {
+                    if status.next_steps.is_empty() {
+                        continue;
+                    }
+                    println!("* {} [{}]", status.title.trim(), status.name());
+                    for step in &status.next_steps {
+                        println!("  * {}", step.trim().replace("\n", "\n    "));
+                    }
+                }
+                Err(e) => println!("* error: {}", e),
+            }
+        }
+    }
+
     Ok(())
 }
 

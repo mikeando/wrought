@@ -8,6 +8,10 @@ Fill this in with an outline of your document.
 * SOMETHING ELSE
 ]])
 
-write_file(".wrought/packages/test/status/01_init", [[
-"message":"setup the init"
+write_file(".wrought/packages/test/status/01_init.toml", [[
+title="Setup the init"
+status="""
+Setup the init
+"""
+next_steps=["setup the init then do the thing"]
 ]])

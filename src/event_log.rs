@@ -15,6 +15,11 @@ pub trait EventLog {
     /// Input must have group_id and ids all set to zero.
     /// Returns the full group with id's correctly set.
     fn add_event_group(&mut self, group: &EventGroup) -> anyhow::Result<EventGroup>;
+
+    /// Not sure we want to keep this forever - we currently use it as a way to build up
+    /// a representation of the current state of the project as far as the event log is
+    // / concerned.
+    fn all_event_groups(&self) -> anyhow::Result<Vec<EventGroup>>;
 }
 
 // --------
@@ -106,6 +111,31 @@ impl EventLog for SQLiteEventLog {
         }
 
         Ok(group)
+    }
+
+    fn all_event_groups(&self) -> anyhow::Result<Vec<EventGroup>> {
+        // Read the group data
+        let mut stmt = self.conn.prepare("SELECT * FROM Groups")?;
+
+        let mut result = vec![];
+        let mut groups = stmt.query(())?;
+        while let Some(group_row) = groups.next()? {
+            let group = self.group_from_group_row(group_row)?;
+            result.push(group);
+        }
+
+        // Now actually read the events each group contains
+        let mut stmt = self
+            .conn
+            .prepare("SELECT * FROM Events WHERE group_id=?1")?;
+        for group in &mut result {
+            let mut events = stmt.query([group.id])?;
+            while let Some(event_row) = events.next()? {
+                let event = self.event_from_event_row(event_row)?;
+                group.events.push(event);
+            }
+        }
+        Ok(result)
     }
 }
 
@@ -259,6 +289,7 @@ pub mod test_utils {
             fn get_file_history(&self, p: &Path) -> anyhow::Result<Vec<Event>>;
             fn get_event_group(&self, group_id: u64) -> anyhow::Result<Option<EventGroup>>;
             fn add_event_group(&mut self, group: &EventGroup) -> anyhow::Result<EventGroup>;
+            fn all_event_groups(&self) -> anyhow::Result<Vec<EventGroup>>;
         }
     }
 }

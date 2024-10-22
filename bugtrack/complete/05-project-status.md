@@ -62,22 +62,28 @@ nest_steps = [
 ]
 ```
 
+We also support colored and uncolored output - default is uncolored.
+
+![Project Status Example](resources/05-project-status/ProjectStatusExamples.png)
+
 ### Directory Status
 
 ## Issue log
 
-* [ ] Create a bugtrack for automating "Next Steps" - or at least limiting it to a single call to
+* [X] Create a bugtrack for automating "Next Steps" - or at least limiting it to a single call to
       `wrought update` to process all pending steps.
-* [ ] Get and print all file listings
-* [ ] Get and print all package statuses
+* [X] Get and print all file listings
+* [X] Get and print all package statuses
   * [X] Determine format for package statuses.
     * For now just a file in the `.wrought/packages/packagename/status` subdirectory?
     * I'm not sure if we should use JSON, toml or just text...
     * TOML seems more readable and allows us to embed extra info later...
-* [ ] Get and print all package "next steps".
+* [X] Get and print all package "next steps".
   * [X] determine format for next steps stuff.
     * Probably a text file somewhere
     * Nah just part of the status files.
+* [X] Detecting deleted files means we cant just scan the working directory.
+
 
 ### Shaping
 
