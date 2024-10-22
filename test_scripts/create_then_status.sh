@@ -23,7 +23,7 @@ echo "New Content" > $PROJECT_DIR/outline.md
 
 echo "Untracked Content" > $PROJECT_DIR/untracked.md
 
-${wrought} --project-root="$PROJECT_DIR" status --color
+${wrought} --project-root="$PROJECT_DIR" status --color --include-aux
 
 
 echo "RERUNNING file-status on outline.md"

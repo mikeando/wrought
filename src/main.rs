@@ -192,6 +192,9 @@ struct InitCmd {
 struct StatusCmd {
     #[arg(long, default_value = "false")]
     color: bool,
+
+    #[arg(long, default_value = "false")]
+    include_aux: bool,
 }
 
 #[derive(Debug, Parser)]
@@ -576,9 +579,23 @@ fn cmd_status(project_root: &Path, cmd: StatusCmd) -> anyhow::Result<()> {
 
     fmt.heading("File Statuses", 2);
     let mut printed_amnything = false;
+
+    let skipped_system_files = [
+        PathBuf::from(".wrought/settings.toml"),
+        PathBuf::from(".wrought/wrought.db"),
+    ];
+
     for f in &project_status.file_statuses {
-        // Skip anything in the .wrought directory
-        if f.path.starts_with(".wrought") {
+        // Skip anything in the .wrought directory unless requested,
+        // but always skip the content directory.
+        //
+        // TODO: There may be others we want to skip too...
+        let skip = match cmd.include_aux {
+            true => f.path.starts_with(".wrought/content"),
+            false => f.path.starts_with(".wrought"),
+        };
+
+        if skip || skipped_system_files.contains(&f.path) {
             continue;
         }
 
