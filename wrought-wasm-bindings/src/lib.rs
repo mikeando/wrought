@@ -1,13 +1,10 @@
 
-
-use serde::Deserialize;
-use serde::Serialize;
-
 type WroughtResult<T> = Result<T,String>;
 
 #[cfg(not(feature="host"))]
 mod client {
     use super::*;
+    use std::path::Path;
 
 // Declare the extern functions that will be provided by the host
     #[link(wasm_import_module = "env")]
@@ -47,7 +44,8 @@ mod client {
 
     impl Wrought {
         pub fn write_file(&mut self, path: &Path, value: &[u8]) -> WroughtResult<()> {
-            let path_buf = format!("{}", path.display()).as_bytes();
+            let path = format!("{}", path.display());
+            let path_buf = path.as_bytes();
             let len = unsafe {
                 wrought_write_file(path_buf.as_ptr(), path_buf.len(), value.as_ptr(), value.len());
                 wasmcb::get_call_buffer_len()
@@ -60,7 +58,8 @@ mod client {
         }
 
         pub fn read_file(&mut self, path: &Path) -> WroughtResult<Option<Vec<u8>>> {
-            let path_buf = format!("{}", path.display()).as_bytes();
+            let path = format!("{}", path.display());
+            let path_buf = path.as_bytes();
             let len = unsafe {
                 wrought_read_file(path_buf.as_ptr(), path_buf.len());
                 wasmcb::get_call_buffer_len()
@@ -73,7 +72,8 @@ mod client {
         }
 
         pub fn get_metadata(&mut self, path: &Path, key: &str) -> WroughtResult<Option<String>> {
-            let path_buf = format!("{}", path.display()).as_bytes();
+            let path = format!("{}", path.display());
+            let path_buf = path.as_bytes();
             let key_buf = key.as_bytes();
             let len = unsafe {
                 wrought_get_metadata(path_buf.as_ptr(), path_buf.len(), key_buf.as_ptr(), key_buf.len());
@@ -87,7 +87,8 @@ mod client {
         }
 
         pub fn set_metadata(&mut self, path: &Path, key: &str, value: &str) -> WroughtResult<()> {
-            let path_buf = format!("{}", path.display()).as_bytes();
+            let path = format!("{}", path.display());
+            let path_buf = path.as_bytes();
             let key_buf = key.as_bytes();
             let value_buf = value.as_bytes();
             let len = unsafe {
@@ -102,7 +103,7 @@ mod client {
         }
 
         pub fn ai_query(&mut self, query: &str) -> WroughtResult<String> {
-            let query_buf = query.as_str();
+            let query_buf = query.as_bytes();
             let len = unsafe {
                 wrought_ai_query(query_buf.as_ptr(), query_buf.len());
                 wasmcb::get_call_buffer_len()
@@ -112,7 +113,6 @@ mod client {
                 wasmcb::read_call_buffer(out_buf.as_mut_ptr(), out_buf.len());
             }
             serde_json::from_slice(&out_buf).unwrap()
-            todo!();
         }
     }
 }
