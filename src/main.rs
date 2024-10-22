@@ -302,7 +302,7 @@ fn cmd_init(cmd: &InitCmd) -> anyhow::Result<()> {
         .as_bytes(),
     )?;
 
-    let content_dir = path.join("_content");
+    let content_dir = path.join(".wrought").join("content");
     fs.lock().unwrap().create_dir_all(&content_dir).unwrap();
 
     // TODO: Make this configurable.
@@ -577,12 +577,8 @@ fn cmd_status(project_root: &Path, cmd: StatusCmd) -> anyhow::Result<()> {
     fmt.heading("File Statuses", 2);
     let mut printed_amnything = false;
     for f in &project_status.file_statuses {
-        // Skip anything in the .wrought directory orthe content directory
-        // TODO: Move the _content directory into the wrought directory?
+        // Skip anything in the .wrought directory
         if f.path.starts_with(".wrought") {
-            continue;
-        }
-        if f.path.starts_with("_content") {
             continue;
         }
 
@@ -667,7 +663,7 @@ fn cmd_run_script(
 pub fn create_backend(path: &Path) -> anyhow::Result<Arc<Mutex<dyn Backend>>> {
     let fs = Arc::new(Mutex::new(xfs::OsFs {}));
     let path = fs.lock().unwrap().canonicalize(path)?;
-    let content_storage_path = path.join("_content");
+    let content_storage_path = path.join(".wrought").join("content");
     let content_store = Arc::new(Mutex::new(FileSystemContentStore::new(
         fs.clone(),
         content_storage_path,
@@ -940,7 +936,7 @@ fn main() {
                     .unwrap(),
             };
 
-            let content_storage_path = project_root.join("_content");
+            let content_storage_path = project_root.join(".wrought").join("content");
             let content_store = Arc::new(Mutex::new(FileSystemContentStore::new(
                 fs.clone(),
                 content_storage_path,
