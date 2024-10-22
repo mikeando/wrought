@@ -1,0 +1,13 @@
+
+[package]
+name = "example-wasm-script"
+version = "0.1.0"
+edition = "2021"
+
+[workspace]
+
+[dependencies]
+wrought-wasm-bindings = { path="../wrought-wasm-bindings" }
+
+[lib]
+crate-type = ["cdylib"]
