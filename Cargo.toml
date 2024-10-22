@@ -3,5 +3,6 @@ resolver="2"
 
 members=[
     "wrought",
+    "wrought-wasm-bindings",
     "wasmcb",
 ]
