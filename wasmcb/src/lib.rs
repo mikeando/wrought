@@ -3,13 +3,71 @@
 mod client {
 
     // Declare the extern functions that will be provided by the host
+
     #[link(wasm_import_module = "env")]
     extern "C" {
         pub fn get_call_buffer_len() -> usize;
         pub fn read_call_buffer(buf_ptr: *mut u8, buf_len: usize);
+        pub fn host_report_error(error_type: i32, ptr: *const u8, len: usize);
+    }
+
+    const ERROR_TYPE_NORMAL: i32 = 1;
+    const ERROR_TYPE_PANIC: i32 = 2;
+
+    /// It is expected that functions that want to do error handling will look like this:
+    ///
+    /// ```
+    /// #[no_mangle]
+    /// pub extern "C" fn main() -> i32 {
+    ///   return match panic::catch_unwind(main_impl) {
+    ///     Err(panic) => {
+    ///       default_panic_hook(panic);
+    ///       -1 
+    ///     },
+    ///     Ok(Ok(())) => 0,
+    ///     Ok(Err(e)) => {
+    ///       report_error(e.to_string());
+    ///       -1
+    ///     },
+    ///  }
+    /// ```
+    /// 
+    /// TODO: We can probably streamline this even further, but it's OK for now.
+    ///
+    pub fn report_error(msg: &str) {
+        unsafe {
+            host_report_error(ERROR_TYPE_NORMAL, msg.as_ptr(), msg.len());
+        }
+    }
+    
+    /// Used by the `default_panic_handler` provided below.
+    pub fn report_panic(msg: &str) {
+        unsafe {
+            host_report_error(ERROR_TYPE_PANIC, msg.as_ptr(), msg.len());
+        }
+    }
+
+    /// The idea is that the WASM code can use the pattern in report_error
+    /// and get all traps/panics reported to the host via the host_report_error
+    /// function.
+    pub fn default_panic_hook(info: &core::panic::PanicInfo) {
+        let msg = match info.payload().downcast_ref::<&str>() {
+            Some(s) => *s,
+            None => match info.payload().downcast_ref::<String>() {
+                Some(s) => s.as_str(),
+                None => "Unknown panic",
+            },
+        };
+    
+        // Include file and line information if available
+        let location = info.location()
+            .map(|loc| format!(" at {}:{}", loc.file(), loc.line()))
+            .unwrap_or_default();
+    
+        let panic_msg = format!("Panic: {}{}", msg, location);
+        report_panic(&panic_msg);
     }
 }
-
 
 
 #[cfg(feature="host")]

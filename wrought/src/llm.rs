@@ -1,7 +1,6 @@
 // Wrappers for the rust_openai stuff
 
 use std::{
-    future::Future,
     path::Path,
     sync::{Arc, Mutex},
 };
@@ -12,8 +11,9 @@ use rust_openai::types::{ChatRequest, SystemMessage};
 
 pub type AsyncMutex<T> = tokio::sync::Mutex<T>;
 
+#[async_trait]
 pub trait LLM {
-    fn query(&mut self, query: &str) -> anyhow::Result<String>;
+    async fn query(&mut self, query: &str) -> anyhow::Result<String>;
 }
 
 pub struct OpenAILLM {
@@ -67,20 +67,7 @@ impl rust_openai::request::TrivialFS for OpenAIFsStub {
 }
 
 impl OpenAILLM {
-    fn run_async<F: Future>(f: F) -> F::Output {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(f)
-    }
-
-    pub fn create_with_key(
-        openai_api_key: String,
-        fs: Arc<Mutex<dyn xfs::Xfs + Send>>,
-        cache_dir: &Path,
-    ) -> anyhow::Result<OpenAILLM> {
-        Self::run_async(Self::create_with_key_async(openai_api_key, fs, cache_dir))
-    }
-
-    pub async fn create_with_key_async(
+    pub async fn create_with_key(
         openai_api_key: String,
         fs: Arc<Mutex<dyn xfs::Xfs + Send>>,
         cache_dir: &Path,
@@ -100,8 +87,11 @@ impl OpenAILLM {
         let llm = rust_openai::request::OpenAILLM::new(requester, cache);
         Ok(OpenAILLM { llm })
     }
+}
 
-    pub async fn query_async(&mut self, query: &str) -> anyhow::Result<String> {
+#[async_trait]
+impl LLM for OpenAILLM {
+    async fn query(&mut self, query: &str) -> anyhow::Result<String> {
         let messages = vec![SystemMessage::new(query).into()];
         let request = ChatRequest::new(rust_openai::types::ModelId::Gpt4oMini, messages);
         let (response, _) = self.llm.make_request(&request).await?;
@@ -117,12 +107,6 @@ impl OpenAILLM {
     }
 }
 
-impl LLM for OpenAILLM {
-    fn query(&mut self, query: &str) -> anyhow::Result<String> {
-        Self::run_async(self.query_async(query))
-    }
-}
-
 pub struct InvalidLLM {
     error_message: String,
 }
@@ -135,8 +119,9 @@ impl InvalidLLM {
     }
 }
 
+#[async_trait]
 impl LLM for InvalidLLM {
-    fn query(&mut self, _query: &str) -> anyhow::Result<String> {
+    async fn query(&mut self, _query: &str) -> anyhow::Result<String> {
         bail!("Unable to access LLM: {}", self.error_message)
     }
 }

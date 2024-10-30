@@ -11,13 +11,13 @@ pub trait ContentStore {
 }
 
 pub struct FileSystemContentStore {
-    fs: Arc<Mutex<dyn xfs::Xfs>>,
+    fs: Arc<Mutex<dyn xfs::Xfs + Send + 'static>>,
     storage_path: PathBuf,
 }
 
 impl FileSystemContentStore {
     pub fn new(
-        fs: Arc<Mutex<dyn xfs::Xfs>>,
+        fs: Arc<Mutex<dyn xfs::Xfs + Send + 'static>>,
         storage_path: std::path::PathBuf,
     ) -> FileSystemContentStore {
         Self { fs, storage_path }
@@ -91,7 +91,7 @@ pub mod tests {
 
     #[test]
     pub fn retrieve_reads_from_correct_path() {
-        let (fs, mut store) = simple_test_case();
+        let (fs, store) = simple_test_case();
         let content = "some content".as_bytes();
         let hash = ContentHash::from_content(content);
         let expected_path = PathBuf::from(format!("some/random/dir/{}", hash.to_string()));

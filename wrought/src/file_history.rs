@@ -79,7 +79,6 @@ pub fn file_history(
 #[cfg(test)]
 pub mod test {
     use std::{
-        any,
         io::Cursor,
         path::PathBuf,
         sync::{Arc, Mutex},
@@ -328,7 +327,7 @@ pub mod test {
 
     #[test]
     pub fn handles_event_log_errors() {
-        let mut fs = MockFs::default();
+        let fs = MockFs::default();
         let mut event_log = MockEventLog::default();
 
         let project_root = PathBuf::from("project_root");

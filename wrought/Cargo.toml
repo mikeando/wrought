@@ -5,6 +5,9 @@ edition = "2021"
 
 [dependencies]
 xfs = { path = "../../inscenerator-rs/xfs" }
+wrought-wasm-bindings = { path="../wrought-wasm-bindings", features = ["host"] }
+wasmcb = { path="../wasmcb", features = ["host"] }
+
 anyhow = "1.0.86"
 base64 = "0.22.1"
 clap = { version = "4.5.16", features = ["derive"] }
@@ -13,11 +16,16 @@ rusqlite = "0.32.1"
 serde = { version = "1.0.210", features = ["derive"] }
 serde_json = "1.0.128"
 sha2 = "0.10.8"
-mlua = { version = "0.9.9", features = ["luau"] }
+mlua = { version = "0.9.9", features = ["luau", "async"] }
 rust_openai = { path = "../../rust_openai"}
 tokio = { version = "1", features = ["full"] }
 async-trait = "0.1"
 toml = "0.8"
+wasmtime = "24.0.0"
+wasmtime-wasi = "24.0.0"
+bytes = "1.7.1"
+
+
 # This could probably be a dev dependency
 mockall = "0.13"
 

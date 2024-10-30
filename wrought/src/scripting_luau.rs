@@ -1,11 +1,14 @@
+use std::future::Future;
 use std::path::Path;
 use std::path::PathBuf;
+use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::Mutex;
 
 use mlua::prelude::*;
 
 use crate::bridge::Bridge;
+type AsyncMutex<T> = tokio::sync::Mutex<T>;
 
 // pub fn lua_print(_lua: &Lua, vals: MultiValue) -> mlua::Result<()> {
 //     println!(
@@ -23,91 +26,101 @@ pub fn convert_error(e: anyhow::Error) -> mlua::Error {
     mlua::Error::runtime(format!("{}", e))
 }
 
-pub fn lua_write_file(
-    bridge: &Arc<Mutex<dyn Bridge>>,
-    _lua: &Lua,
+pub fn lua_write_file<'lua>(
+    bridge: Arc<AsyncMutex<dyn Bridge>>,
+    _lua: &'lua Lua,
     (file_name, value): (String, String),
-) -> anyhow::Result<()> {
-    bridge
-        .lock()
-        .unwrap()
-        .write_file(&PathBuf::from(file_name), value.as_bytes())?;
-    Ok(())
+) -> Pin<Box<dyn Future<Output = anyhow::Result<()>> + 'lua>> {
+    Box::pin(async move {
+        bridge
+            .lock()
+            .await
+            .write_file(&PathBuf::from(file_name), value.as_bytes())?;
+        Ok(())
+    })
 }
 
-pub fn lua_read_file(
-    bridge: &Arc<Mutex<dyn Bridge>>,
-    _lua: &Lua,
+pub fn lua_read_file<'lua>(
+    bridge: Arc<AsyncMutex<dyn Bridge>>,
+    _lua: &'lua Lua,
     file_name: String,
-) -> anyhow::Result<Option<String>> {
-    eprintln!("in lua_read_file...");
-    let result = bridge
-        .lock()
-        .unwrap()
-        .read_file(&PathBuf::from(file_name))?;
-    let Some(result) = result else {
-        return Ok(None);
-    };
-    let result = String::from_utf8(result)?;
-    Ok(Some(result))
+) -> Pin<Box<dyn Future<Output = anyhow::Result<Option<String>>> + 'lua>> {
+    Box::pin(async move {
+        let result = bridge.lock().await.read_file(&PathBuf::from(file_name))?;
+        let Some(result) = result else {
+            return Ok(None);
+        };
+        let result = String::from_utf8(result)?;
+        Ok(Some(result))
+    })
 }
 
-pub fn lua_get_metadata(
-    bridge: &Arc<Mutex<dyn Bridge>>,
-    _lua: &Lua,
+pub fn lua_get_metadata<'lua>(
+    bridge: Arc<AsyncMutex<dyn Bridge>>,
+    _lua: &'lua Lua,
     (file_name, key): (String, String),
-) -> anyhow::Result<Option<String>> {
-    eprintln!("In luad_get_metadata...");
-    let result = bridge
-        .lock()
-        .unwrap()
-        .get_metadata(&PathBuf::from(file_name), &key)?;
-    Ok(result)
+) -> Pin<Box<dyn Future<Output = anyhow::Result<Option<String>>> + 'lua>> {
+    Box::pin(async move {
+        let result = bridge
+            .lock()
+            .await
+            .get_metadata(&PathBuf::from(file_name), &key)?;
+        Ok(result)
+    })
 }
 
-pub fn lua_set_metadata(
-    bridge: &Arc<Mutex<dyn Bridge>>,
-    _lua: &Lua,
+pub fn lua_set_metadata<'lua>(
+    bridge: Arc<AsyncMutex<dyn Bridge>>,
+    _lua: &'lua Lua,
     (file_name, key, value): (String, String, String),
-) -> anyhow::Result<()> {
-    eprintln!("In lua_set_metadata...");
-    bridge
-        .lock()
-        .unwrap()
-        .set_metadata(&PathBuf::from(file_name), &key, &value)?;
-    Ok(())
+) -> Pin<Box<dyn Future<Output = anyhow::Result<()>> + 'lua>> {
+    Box::pin(async move {
+        bridge
+            .lock()
+            .await
+            .set_metadata(&PathBuf::from(file_name), &key, &value)?;
+        Ok(())
+    })
 }
 
-pub fn lua_ai_query(
-    bridge: &Arc<Mutex<dyn Bridge>>,
-    _lua: &Lua,
+pub fn lua_ai_query<'lua>(
+    bridge: Arc<AsyncMutex<dyn Bridge>>,
+    _lua: &'lua Lua,
     query: String,
-) -> anyhow::Result<String> {
-    bridge.lock().unwrap().ai_query(&query)
+) -> Pin<Box<dyn Future<Output = anyhow::Result<String>> + 'lua>> {
+    Box::pin(async move { bridge.lock().await.ai_query(&query).await })
 }
 
 fn add_bridge_function<'lua, F, A, R>(
-    bridge: &Arc<Mutex<dyn Bridge>>,
+    bridge: Arc<AsyncMutex<dyn Bridge>>,
     lua: &'lua Lua,
     name: &str,
     f: F,
 ) -> anyhow::Result<()>
 where
-    F: Fn(&Arc<Mutex<dyn Bridge>>, &Lua, A) -> anyhow::Result<R> + 'static,
-    A: FromLuaMulti<'lua>,
+    F: for<'a> Fn(
+            Arc<AsyncMutex<dyn Bridge>>,
+            &'a Lua,
+            A,
+        ) -> Pin<Box<dyn Future<Output = anyhow::Result<R>> + 'a>>
+        + Copy
+        + 'static,
+    A: FromLuaMulti<'lua> + 'lua,
     R: IntoLuaMulti<'lua>,
 {
-    let be = bridge.clone();
     let globals = lua.globals();
     globals.set(
         name,
-        lua.create_function(move |l, v| f(&be, l, v).map_err(convert_error))?,
+        lua.create_async_function(move |l, v| {
+            let be = bridge.clone();
+            async move { f(be, l, v).await.map_err(convert_error) }
+        })?,
     )?;
     Ok(())
 }
 
 pub fn run_script(
-    bridge: Arc<Mutex<dyn Bridge>>,
+    bridge: Arc<AsyncMutex<dyn Bridge>>,
     fs: Arc<Mutex<dyn xfs::Xfs>>,
     script_path: &Path,
 ) -> anyhow::Result<()> {
@@ -116,7 +129,7 @@ pub fn run_script(
 
 // The additional F function is used to add hooks when testing
 pub fn run_script_ex<F>(
-    bridge: Arc<Mutex<dyn Bridge>>,
+    bridge: Arc<AsyncMutex<dyn Bridge>>,
     fs: Arc<Mutex<dyn xfs::Xfs>>,
     script_path: &Path,
     f: F,
@@ -132,11 +145,11 @@ where
     // let globals = lua.globals();
     // let print = lua.create_function(lua_print)?;
     // globals.set("print", print)?;
-    add_bridge_function(&bridge, &lua, "write_file", lua_write_file)?;
-    add_bridge_function(&bridge, &lua, "read_file", lua_read_file)?;
-    add_bridge_function(&bridge, &lua, "set_metadata", lua_set_metadata)?;
-    add_bridge_function(&bridge, &lua, "get_metadata", lua_get_metadata)?;
-    add_bridge_function(&bridge, &lua, "ai_query", lua_ai_query)?;
+    add_bridge_function(bridge.clone(), &lua, "write_file", lua_write_file)?;
+    add_bridge_function(bridge.clone(), &lua, "read_file", lua_read_file)?;
+    add_bridge_function(bridge.clone(), &lua, "set_metadata", lua_set_metadata)?;
+    add_bridge_function(bridge.clone(), &lua, "get_metadata", lua_get_metadata)?;
+    add_bridge_function(bridge.clone(), &lua, "ai_query", lua_ai_query)?;
 
     f(&lua)?;
 
@@ -156,18 +169,20 @@ mod tests {
 
     use super::*;
     use anyhow::anyhow;
+    use async_trait::async_trait;
     use mockall::{mock, predicate};
     use std::sync::{Arc, Mutex};
 
     mock! {
         pub Bridge {}
 
+        #[async_trait]
         impl Bridge for Bridge {
             fn write_file(&mut self, path: &Path, value: &[u8]) -> anyhow::Result<()>;
             fn read_file(&mut self, path: &Path) -> anyhow::Result<Option<Vec<u8>>>;
             fn get_metadata(&mut self, path: &Path, key: &str) -> anyhow::Result<Option<String>>;
             fn set_metadata(&mut self, path: &Path, key: &str, value: &str) -> anyhow::Result<()>;
-            fn ai_query(&mut self, query: &str) -> anyhow::Result<String>;
+            async fn ai_query(&mut self, query: &str) -> anyhow::Result<String>;
             fn get_event_group(&self) -> Option<EventGroup>;
         }
     }
@@ -200,8 +215,8 @@ mod tests {
         todo!();
     }
 
-    #[test]
-    pub fn run_script_write_file() {
+    #[tokio::test]
+    pub async fn run_script_write_file() {
         let mut fs = xfs::mockfs::MockFS::new();
 
         fs.add_r(
@@ -219,7 +234,7 @@ mod tests {
             )
             .returning(|_, _| Ok(()));
 
-        let mock_bridge = Arc::new(Mutex::new(mock_bridge));
+        let mock_bridge = Arc::new(AsyncMutex::new(mock_bridge));
         let fs = Arc::new(Mutex::new(fs));
 
         run_script(
@@ -229,11 +244,11 @@ mod tests {
         )
         .unwrap();
 
-        mock_bridge.lock().unwrap().checkpoint();
+        mock_bridge.lock().await.checkpoint();
     }
 
-    #[test]
-    pub fn run_script_write_file_invalid() {
+    #[tokio::test]
+    pub async fn run_script_write_file_invalid() {
         let mut fs = xfs::mockfs::MockFS::new();
 
         fs.add_r(
@@ -251,7 +266,7 @@ mod tests {
             )
             .returning(|_, _| Err(anyhow!("Write Failure")));
 
-        let mock_bridge = Arc::new(Mutex::new(mock_bridge));
+        let mock_bridge = Arc::new(AsyncMutex::new(mock_bridge));
         let fs = Arc::new(Mutex::new(fs));
 
         let result = run_script(
@@ -261,11 +276,11 @@ mod tests {
         );
         assert!(result.is_err());
 
-        mock_bridge.lock().unwrap().checkpoint();
+        mock_bridge.lock().await.checkpoint();
     }
 
-    #[test]
-    pub fn run_script_read_file() {
+    #[tokio::test]
+    pub async fn run_script_read_file() {
         let mut fs = xfs::mockfs::MockFS::new();
 
         fs.add_r(
@@ -280,7 +295,7 @@ mod tests {
             .with(predicate::eq(PathBuf::from("someplace/foo.txt")))
             .returning(|_| Ok(Some(b"some content".to_vec())));
 
-        let mock_bridge = Arc::new(Mutex::new(mock_bridge));
+        let mock_bridge = Arc::new(AsyncMutex::new(mock_bridge));
         let fs = Arc::new(Mutex::new(fs));
 
         run_script(
@@ -296,11 +311,11 @@ mod tests {
         //       Tricky bit about this is working out how to hook it up to `run_script`
         //
 
-        mock_bridge.lock().unwrap().checkpoint();
+        mock_bridge.lock().await.checkpoint();
     }
 
-    #[test]
-    pub fn run_script_read_empty() {
+    #[tokio::test]
+    pub async fn run_script_read_empty() {
         let mut fs = xfs::mockfs::MockFS::new();
 
         fs.add_r(
@@ -315,7 +330,7 @@ mod tests {
             .with(predicate::eq(PathBuf::from("someplace/foo.txt")))
             .returning(|_| Ok(None));
 
-        let mock_bridge = Arc::new(Mutex::new(mock_bridge));
+        let mock_bridge = Arc::new(AsyncMutex::new(mock_bridge));
         let fs = Arc::new(Mutex::new(fs));
 
         run_script(
@@ -325,11 +340,11 @@ mod tests {
         )
         .unwrap();
 
-        mock_bridge.lock().unwrap().checkpoint();
+        mock_bridge.lock().await.checkpoint();
     }
 
-    #[test]
-    pub fn run_script_read_error() {
+    #[tokio::test]
+    pub async fn run_script_read_error() {
         let mut fs = xfs::mockfs::MockFS::new();
 
         fs.add_r(
@@ -344,7 +359,7 @@ mod tests {
             .with(predicate::eq(PathBuf::from("someplace/foo.txt")))
             .returning(|_| Err(anyhow!("Read Failure")));
 
-        let mock_bridge = Arc::new(Mutex::new(mock_bridge));
+        let mock_bridge = Arc::new(AsyncMutex::new(mock_bridge));
         let fs = Arc::new(Mutex::new(fs));
 
         let result = run_script(
@@ -354,7 +369,7 @@ mod tests {
         );
         assert!(result.is_err());
 
-        mock_bridge.lock().unwrap().checkpoint();
+        mock_bridge.lock().await.checkpoint();
     }
 
     #[test]
@@ -367,8 +382,8 @@ mod tests {
         todo!();
     }
 
-    #[test]
-    pub fn make_ai_query() {
+    #[tokio::test]
+    pub async fn make_ai_query() {
         let mut fs = xfs::mockfs::MockFS::new();
 
         fs.add_r(
@@ -389,7 +404,7 @@ mod tests {
             .with(predicate::eq("Tell me a fun story".to_string()))
             .returning(|_| Ok("There once was a fish".to_string()));
 
-        let mock_bridge = Arc::new(Mutex::new(mock_bridge));
+        let mock_bridge = Arc::new(AsyncMutex::new(mock_bridge));
         let fs = Arc::new(Mutex::new(fs));
 
         let test_values = Arc::new(Mutex::new(vec![]));
@@ -407,11 +422,11 @@ mod tests {
             vec!["There once was a fish"]
         );
 
-        mock_bridge.lock().unwrap().checkpoint();
+        mock_bridge.lock().await.checkpoint();
     }
 
-    #[test]
-    pub fn make_ai_query_error() {
+    #[tokio::test]
+    pub async fn make_ai_query_error() {
         let mut fs = xfs::mockfs::MockFS::new();
 
         fs.add_r(
@@ -432,7 +447,7 @@ mod tests {
             .with(predicate::eq("Tell me a fun story".to_string()))
             .returning(|_| Err(anyhow!("Network is tofu")));
 
-        let mock_bridge = Arc::new(Mutex::new(mock_bridge));
+        let mock_bridge = Arc::new(AsyncMutex::new(mock_bridge));
         let fs = Arc::new(Mutex::new(fs));
 
         let test_values = Arc::new(Mutex::new(vec![]));
@@ -446,6 +461,6 @@ mod tests {
         assert!(result.is_err());
         assert!(test_values.lock().unwrap().is_empty());
 
-        mock_bridge.lock().unwrap().checkpoint();
+        mock_bridge.lock().await.checkpoint();
     }
 }

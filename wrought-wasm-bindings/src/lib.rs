@@ -1,5 +1,5 @@
 
-type WroughtResult<T> = Result<T,String>;
+pub type WroughtResult<T> = Result<T,String>;
 
 #[cfg(not(feature="host"))]
 mod client {

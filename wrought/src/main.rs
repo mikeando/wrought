@@ -22,6 +22,7 @@ pub mod llm;
 pub mod metadata;
 pub mod project_status;
 pub mod scripting_luau;
+pub mod scripting_wasm;
 
 use binary16::ContentHash;
 use content_store::{ContentStore, FileSystemContentStore};
@@ -34,9 +35,10 @@ use llm::{InvalidLLM, OpenAILLM, LLM};
 use metadata::MetadataEntry;
 use metadata::MetadataKey;
 use project_status::get_project_status;
-use scripting_luau::run_script;
 use serde::{Deserialize, Serialize};
 use xfs::Xfs;
+
+type AsyncMutex<T> = tokio::sync::Mutex<T>;
 
 pub struct Wrought {
     backend: Arc<Mutex<dyn Backend>>,
@@ -259,7 +261,7 @@ fn find_marker_dir(
     }
 }
 
-fn cmd_init(cmd: &InitCmd) -> anyhow::Result<()> {
+async fn cmd_init(cmd: &InitCmd) -> anyhow::Result<()> {
     let fs = Arc::new(Mutex::new(xfs::OsFs {}));
     let path = &cmd.path;
 
@@ -336,13 +338,13 @@ fn cmd_init(cmd: &InitCmd) -> anyhow::Result<()> {
     // Now if there is an init script we should run it.
     println!("Running init scripts");
 
-    let bridge = create_bridge(path)?;
+    let bridge = create_bridge(path).await?;
 
     if project_package.join("init.luau").is_file() {
-        run_script(bridge.clone(), fs, &project_package.join("init.luau"))?;
+        scripting_luau::run_script(bridge.clone(), fs, &project_package.join("init.luau"))?;
         // TODO: Does this belong in the bridge?
         let event_log = create_event_log(path).unwrap();
-        if let Some(event_group) = bridge.lock().unwrap().get_event_group() {
+        if let Some(event_group) = bridge.lock().await.get_event_group() {
             event_log
                 .lock()
                 .unwrap()
@@ -663,8 +665,8 @@ fn cmd_status(project_root: &Path, cmd: StatusCmd) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn cmd_run_script(
-    bridge: Arc<Mutex<dyn Bridge>>,
+async fn cmd_run_script(
+    bridge: Arc<AsyncMutex<dyn Bridge + Send + 'static>>,
     project_root: &Path,
     cmd: RunScriptCmd,
 ) -> anyhow::Result<()> {
@@ -672,12 +674,27 @@ fn cmd_run_script(
     let script_path = project_root
         .join(".wrought")
         .join("packages")
-        .join(cmd.script_name);
-    run_script(bridge, fs, &script_path)?;
+        .join(&cmd.script_name);
+    // TODO: Get rid of unwrap here...
+    let extension = script_path.extension().unwrap();
+    if extension == "luau" || extension == "lua" {
+        scripting_luau::run_script(bridge, fs, &script_path)
+            .with_context(|| format!("error running lua script {}", cmd.script_name))?;
+    } else if extension == "wasm" {
+        scripting_wasm::run_script(bridge, fs, &script_path)
+            .await
+            .with_context(|| format!("error running WASM script {}", cmd.script_name))?;
+    } else {
+        bail!(
+            "Unsupported script extension '{:?}' for {}",
+            extension,
+            script_path.display()
+        );
+    }
     Ok(())
 }
 
-pub fn create_backend(path: &Path) -> anyhow::Result<Arc<Mutex<dyn Backend>>> {
+pub fn create_backend(path: &Path) -> anyhow::Result<Arc<Mutex<dyn Backend + Send + 'static>>> {
     let fs = Arc::new(Mutex::new(xfs::OsFs {}));
     let path = fs.lock().unwrap().canonicalize(path)?;
     let content_storage_path = path.join(".wrought").join("content");
@@ -698,7 +715,9 @@ pub fn create_event_log(path: &Path) -> anyhow::Result<Arc<Mutex<dyn EventLog>>>
     )))
 }
 
-pub fn create_bridge(path: &Path) -> anyhow::Result<Arc<Mutex<dyn Bridge>>> {
+pub async fn create_bridge(
+    path: &Path,
+) -> anyhow::Result<Arc<AsyncMutex<dyn Bridge + Send + 'static>>> {
     let fs = Arc::new(Mutex::new(xfs::OsFs {}));
     // Load up an settings in the project settings file - needed
     // to initialise the openAI LLM.
@@ -729,19 +748,19 @@ pub fn create_bridge(path: &Path) -> anyhow::Result<Arc<Mutex<dyn Bridge>>> {
         ),
         None => None,
     };
-    let llm: Arc<Mutex<dyn LLM>> = match openai_api_key {
+    let llm: Arc<AsyncMutex<dyn LLM + Send + 'static>> = match openai_api_key {
         Some(openai_api_key) => {
-            let llm = OpenAILLM::create_with_key(openai_api_key, fs, &llm_cache_dir)?;
-            Arc::new(Mutex::new(llm))
+            let llm = OpenAILLM::create_with_key(openai_api_key, fs, &llm_cache_dir).await?;
+            Arc::new(AsyncMutex::new(llm))
         }
         None => {
             let llm =
                 InvalidLLM::create_with_error_message("no openAI key specified in settings file");
-            Arc::new(Mutex::new(llm))
+            Arc::new(AsyncMutex::new(llm))
         }
     };
 
-    Ok(Arc::new(Mutex::new(SimpleBridge {
+    Ok(Arc::new(AsyncMutex::new(SimpleBridge {
         root,
         backend,
         event_group: EventGroup::empty(),
@@ -851,8 +870,9 @@ fn cmd_content_store_show(
     Ok(())
 }
 
-fn main() {
-    let fs: Arc<Mutex<dyn xfs::Xfs>> = Arc::new(Mutex::new(xfs::OsFs {}));
+#[tokio::main]
+async fn main() {
+    let fs: Arc<Mutex<dyn xfs::Xfs + Send + 'static>> = Arc::new(Mutex::new(xfs::OsFs {}));
 
     let working_dir = fs
         .lock()
@@ -864,7 +884,7 @@ fn main() {
     // Have to handle Init differntly as it doesn't care about the project_root already
     // existing etc.
     if let Command::Init(cmd) = &args.command {
-        cmd_init(cmd).unwrap();
+        cmd_init(cmd).await.unwrap();
         return;
     }
 
@@ -980,10 +1000,12 @@ fn main() {
             };
             // eprintln!("Using project root: '{}'", project_root.display());
 
-            let bridge = create_bridge(&project_root).unwrap();
-            cmd_run_script(bridge.clone(), &project_root, cmd).unwrap();
+            let bridge = create_bridge(&project_root).await.unwrap();
+            cmd_run_script(bridge.clone(), &project_root, cmd)
+                .await
+                .unwrap();
             let event_log = create_event_log(&project_root).unwrap();
-            if let Some(event_group) = bridge.lock().unwrap().get_event_group() {
+            if let Some(event_group) = bridge.lock().await.get_event_group() {
                 event_log
                     .lock()
                     .unwrap()
@@ -1063,7 +1085,7 @@ impl TrackedFileStatus {
 }
 
 pub fn get_single_file_status(
-    fs: &Arc<Mutex<dyn xfs::Xfs>>,
+    fs: &Arc<Mutex<dyn xfs::Xfs + Send + 'static>>,
     project_root: &Path,
     event_log: &Arc<Mutex<dyn EventLog>>,
     p: &Path,

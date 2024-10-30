@@ -41,9 +41,9 @@ pub trait Backend {
 // -----------------
 
 pub struct SimpleBackend {
-    pub fs: Arc<Mutex<dyn xfs::Xfs>>,
+    pub fs: Arc<Mutex<dyn xfs::Xfs + Send + 'static>>,
     pub root: PathBuf,
-    pub content_store: Arc<Mutex<dyn ContentStore>>,
+    pub content_store: Arc<Mutex<dyn ContentStore + Send + 'static>>,
 }
 
 impl Backend for SimpleBackend {

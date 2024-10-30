@@ -7,7 +7,12 @@ edition = "2021"
 [workspace]
 
 [dependencies]
+wasmcb = { path = "../wasmcb" }
 wrought-wasm-bindings = { path="../wrought-wasm-bindings" }
+serde = { version = "1.0.210", features = ["derive"] }
+serde_json = "1.0.128"
+anyhow = "1.0.86"
+
 
 [lib]
 crate-type = ["cdylib"]
