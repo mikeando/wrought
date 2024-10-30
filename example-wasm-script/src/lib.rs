@@ -1,16 +1,15 @@
-use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 use wasmcb::{default_panic_hook, report_error};
 use wrought_wasm_bindings::Wrought;
 
-#[derive(Serialize,Deserialize)]
+#[derive(Serialize, Deserialize)]
 struct DemoStruct {
-    call_count: u32
+    call_count: u32,
 }
 
 #[no_mangle]
-pub extern "C" 
-fn plugin() -> i32 {
+pub extern "C" fn plugin() -> i32 {
     std::panic::set_hook(Box::new(default_panic_hook));
 
     return match plugin_impl() {
@@ -18,8 +17,8 @@ fn plugin() -> i32 {
         Err(e) => {
             report_error(&e.to_string());
             -1
-       },
-    }
+        }
+    };
 }
 
 fn plugin_impl() -> anyhow::Result<()> {
@@ -35,18 +34,23 @@ fn plugin_impl() -> anyhow::Result<()> {
 
     demo.call_count += 1;
 
-    wrought.write_file(&demo_path, &serde_json::to_vec(&demo).unwrap()).unwrap();
+    wrought
+        .write_file(&demo_path, &serde_json::to_vec(&demo).unwrap())
+        .unwrap();
 
-    wrought.set_metadata(&demo_path, "some_metatdata", "hello").unwrap();
-    
+    wrought
+        .set_metadata(&demo_path, "some_metatdata", "hello")
+        .unwrap();
+
     //TODO: Try both ai_query and get_metadata here
     let story = wrought.ai_query("Tell me a fun story").unwrap();
-    wrought.write_file(&PathBuf::from("story.md"), story.as_bytes()).unwrap();
+    wrought
+        .write_file(&PathBuf::from("story.md"), story.as_bytes())
+        .unwrap();
 
     println!("WASM DONE");
 
     // panic!("BANG");
     // anyhow::bail!("NOPE");
-    return Ok(())
+    return Ok(());
 }
-

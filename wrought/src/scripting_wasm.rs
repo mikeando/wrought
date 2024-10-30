@@ -365,11 +365,13 @@ where
 
     let errors = Arc::new(Mutex::new(Vec::new()));
     let errors_clone = errors.clone();
-        
-    linker.func_wrap_async("env", "host_report_error", 
+
+    linker.func_wrap_async(
+        "env",
+        "host_report_error",
         move |mut caller: Caller<'_, _>, (error_type, ptr, len): (i32, i32, i32)| {
             let errors_clone = errors_clone.clone();
-            Box::new( async move {
+            Box::new(async move {
                 let memory = caller.get_export("memory").unwrap().into_memory().unwrap();
                 let data = memory.data(&caller)[ptr as usize..(ptr + len) as usize].to_vec();
                 let error = String::from_utf8(data).unwrap();
@@ -380,7 +382,7 @@ where
                 };
                 errors_clone.lock().unwrap().push(error);
             })
-        }
+        },
     )?;
 
     f(&linker).with_context(|| format!("Error installing utility functions"))?;
@@ -403,17 +405,16 @@ where
     let func = instance
         .get_typed_func::<(), i32>(&mut store, "plugin")
         .with_context(|| format!("Unable to load plugin function"))?;
-    let result = func
-        .call_async(&mut store, ())
-        .await;
+    let result = func.call_async(&mut store, ()).await;
 
     match result {
-        Ok(0) => {},
+        Ok(0) => {}
         Ok(_) => {
             // Handle normal error(s)
             let errors = errors.lock().unwrap();
             if !errors.is_empty() {
-                let error_msgs: Vec<String> = errors.iter()
+                let error_msgs: Vec<String> = errors
+                    .iter()
                     .map(|e| match e {
                         WasmError::Normal(msg) => format!("Error: {}", msg),
                         WasmError::Panic(msg) => format!("Panic: {}", msg),
@@ -428,7 +429,8 @@ where
             // Handle trap (like panics)
             let errors = errors.lock().unwrap();
             if !errors.is_empty() {
-                let error_msgs: Vec<String> = errors.iter()
+                let error_msgs: Vec<String> = errors
+                    .iter()
                     .map(|e| match e {
                         WasmError::Normal(msg) => format!("Error: {}", msg),
                         WasmError::Panic(msg) => format!("Panic: {}", msg),

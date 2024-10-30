@@ -1,12 +1,11 @@
+pub type WroughtResult<T> = Result<T, String>;
 
-pub type WroughtResult<T> = Result<T,String>;
-
-#[cfg(not(feature="host"))]
+#[cfg(not(feature = "host"))]
 mod client {
     use super::*;
     use std::path::Path;
 
-// Declare the extern functions that will be provided by the host
+    // Declare the extern functions that will be provided by the host
     #[link(wasm_import_module = "env")]
     extern "C" {
         fn wrought_write_file(
@@ -15,10 +14,7 @@ mod client {
             content_ptr: *const u8,
             content_len: usize,
         );
-        fn wrought_read_file(
-            path_ptr: *const u8,
-            path_len: usize,
-        );
+        fn wrought_read_file(path_ptr: *const u8, path_len: usize);
         fn wrought_get_metadata(
             path_ptr: *const u8,
             path_len: usize,
@@ -31,14 +27,10 @@ mod client {
             key_ptr: *const u8,
             key_len: usize,
             content_ptr: *const u8,
-            content_len: usize
+            content_len: usize,
         );
-        fn wrought_ai_query(
-            query_ptr: *const u8,
-            query_len: usize,
-        );
+        fn wrought_ai_query(query_ptr: *const u8, query_len: usize);
     }
-
 
     pub struct Wrought {}
 
@@ -47,7 +39,12 @@ mod client {
             let path = format!("{}", path.display());
             let path_buf = path.as_bytes();
             let len = unsafe {
-                wrought_write_file(path_buf.as_ptr(), path_buf.len(), value.as_ptr(), value.len());
+                wrought_write_file(
+                    path_buf.as_ptr(),
+                    path_buf.len(),
+                    value.as_ptr(),
+                    value.len(),
+                );
                 wasmcb::get_call_buffer_len()
             };
             let mut out_buf = vec![0u8; len];
@@ -76,7 +73,12 @@ mod client {
             let path_buf = path.as_bytes();
             let key_buf = key.as_bytes();
             let len = unsafe {
-                wrought_get_metadata(path_buf.as_ptr(), path_buf.len(), key_buf.as_ptr(), key_buf.len());
+                wrought_get_metadata(
+                    path_buf.as_ptr(),
+                    path_buf.len(),
+                    key_buf.as_ptr(),
+                    key_buf.len(),
+                );
                 wasmcb::get_call_buffer_len()
             };
             let mut out_buf = vec![0u8; len];
@@ -92,7 +94,14 @@ mod client {
             let key_buf = key.as_bytes();
             let value_buf = value.as_bytes();
             let len = unsafe {
-                wrought_set_metadata(path_buf.as_ptr(), path_buf.len(), key_buf.as_ptr(), key_buf.len(), value_buf.as_ptr(), value_buf.len());
+                wrought_set_metadata(
+                    path_buf.as_ptr(),
+                    path_buf.len(),
+                    key_buf.as_ptr(),
+                    key_buf.len(),
+                    value_buf.as_ptr(),
+                    value_buf.len(),
+                );
                 wasmcb::get_call_buffer_len()
             };
             let mut out_buf = vec![0u8; len];
@@ -117,7 +126,5 @@ mod client {
     }
 }
 
-#[cfg(not(feature="host"))]
+#[cfg(not(feature = "host"))]
 pub use client::*;
-
-
