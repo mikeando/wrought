@@ -48,6 +48,19 @@ fn plugin_impl() -> anyhow::Result<()> {
         .write_file(&PathBuf::from("story.md"), story.as_bytes())
         .unwrap();
 
+
+    // OK Lets try out the templating
+    println!("TRYING TEMPLATING...");
+    {
+        let mut templater = wrought.template().map_err(|e| anyhow::anyhow!("unable to create templater: {}", e))?;
+        templater.add_template("hello", "Hello, {{ name }}").map_err(|e| anyhow::anyhow!("unable to add template: {}", e))?;
+        let values = serde_json::json!({
+            "name": "World"
+        });
+        let result = templater.render_template("hello", &values).map_err(|e| anyhow::anyhow!("unable to render template: {}", e))?;
+        println!("TEMPLATE: {}", result);
+    }
+
     println!("WASM DONE");
 
     // panic!("BANG");
