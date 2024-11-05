@@ -1,6 +1,6 @@
 # Support templating in scripts
 
-## Status: P1
+## Status: DONE
 
 ## Problem
 
@@ -42,12 +42,35 @@ leads to issues with (a) ensuring the file is within the project, (b) the posibi
 of missing it as a dependency it the file tracking. If we use the usual `read_file`, `write_file`
 functions then we avoid this issue.
 
+### Final decision
+
+In the end we went with Tera and the template object approach - in lua this looks like:
+
+```lua
+local templater = wrought_template()
+templater:add_template("hello", "Hello, {{ name }}: zip+1 = {{ zip + 1 }}")
+local values = {name="World", zip=1}
+local result = templater:render_template("hello", values)
+print("TEMPLATE:", result);
+```
+
+And in rust-wasm it looks like
+
+```rust
+let mut templater = wrought.template().map_err(|e| anyhow::anyhow!("unable to create templater: {}", e))?;
+templater.add_template("hello", "Hello, {{ name }}: zip+1 = {{ zip + 1 }}").map_err(|e| anyhow::anyhow!("unable to add template: {}", e))?;
+let values = serde_json::json!({ "name": "World", "zip":1 });
+let result = templater.render_template("hello", &values).map_err(|e| anyhow::anyhow!("unable to render template: {}", e))?;
+println!("TEMPLATE: {}", result);
+```
+
 ## Issue log
 
-* [ ] what templatingv library(s) should we support?
-  * [ ] ? Tera - https://crates.io/crates/tera
+* [X] what templatingv library(s) should we support?
+  * [X] ? Tera - https://crates.io/crates/tera
      - Mostly built around directories of templates?
        - Means it is probably going to work better with the template object way, as we could probably do something like
          `template.add_template("some_name", "...template_content...");
   * [ ] ? Handlebars - https://crates.io/crates/handlebars 
+     - Not for now... tera is enough for now.
 

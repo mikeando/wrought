@@ -16,3 +16,9 @@ end
 
 write_file("another_file.md", content .. "metadata = '" .. md .. "'")
 set_metadata("another_file.md", "a_key", "Some Value")
+
+local templater = wrought_template()
+templater:add_template("hello", "Hello, {{ name }}: zip+1 = {{ zip + 1}}")
+local values = {name="World", zip=1}
+local result = templater:render_template("hello", values)
+print("TEMPLATE:", result);

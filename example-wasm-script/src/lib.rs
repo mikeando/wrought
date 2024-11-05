@@ -53,10 +53,8 @@ fn plugin_impl() -> anyhow::Result<()> {
     println!("TRYING TEMPLATING...");
     {
         let mut templater = wrought.template().map_err(|e| anyhow::anyhow!("unable to create templater: {}", e))?;
-        templater.add_template("hello", "Hello, {{ name }}").map_err(|e| anyhow::anyhow!("unable to add template: {}", e))?;
-        let values = serde_json::json!({
-            "name": "World"
-        });
+        templater.add_template("hello", "Hello, {{ name }}: zip+1 = {{ zip + 1 }}").map_err(|e| anyhow::anyhow!("unable to add template: {}", e))?;
+        let values = serde_json::json!({ "name": "World", "zip":1 });
         let result = templater.render_template("hello", &values).map_err(|e| anyhow::anyhow!("unable to render template: {}", e))?;
         println!("TEMPLATE: {}", result);
     }
