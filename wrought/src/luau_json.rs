@@ -3,7 +3,6 @@ use std::collections::BTreeMap;
 use mlua::{Lua, Value as LuaValue};
 use serde_json::{Number, Value as JsonValue};
 
-
 #[derive(Debug)]
 pub enum ConversionError {
     UnsupportedType(String),

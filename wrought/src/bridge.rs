@@ -3,10 +3,6 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use async_trait::async_trait;
-
-type AsyncMutex<T> = tokio::sync::Mutex<T>;
-
 use crate::{
     backend::Backend,
     events::{
@@ -16,26 +12,24 @@ use crate::{
     metadata::{MetadataEntry, MetadataKey},
 };
 
-#[async_trait]
 pub trait Bridge {
     fn write_file(&mut self, path: &Path, value: &[u8]) -> anyhow::Result<()>;
     fn read_file(&mut self, path: &Path) -> anyhow::Result<Option<Vec<u8>>>;
     fn get_metadata(&mut self, path: &Path, key: &str) -> anyhow::Result<Option<String>>;
     fn set_metadata(&mut self, path: &Path, key: &str, value: &str) -> anyhow::Result<()>;
-    async fn ai_query(&mut self, query: &str) -> anyhow::Result<String>;
+    fn ai_query(&mut self, query: &str) -> anyhow::Result<String>;
     fn get_event_group(&self) -> Option<EventGroup>;
 }
 
 pub struct SimpleBridge {
     pub backend: Arc<Mutex<dyn Backend + Send + 'static>>,
     // pub event_log: Arc<Mutex< dyn EventLog >>,
-    pub llm: Arc<AsyncMutex<dyn LLM + Send + 'static>>,
+    pub llm: Arc<Mutex<dyn LLM + Send + 'static>>,
     pub root: PathBuf,
 
     pub event_group: EventGroup,
 }
 
-#[async_trait]
 impl Bridge for SimpleBridge {
     fn write_file(&mut self, path: &Path, value: &[u8]) -> anyhow::Result<()> {
         let (before_hash, hash) = self.backend.lock().unwrap().write_file(path, value)?;
@@ -97,8 +91,8 @@ impl Bridge for SimpleBridge {
         Some(self.event_group.clone())
     }
 
-    async fn ai_query(&mut self, query: &str) -> anyhow::Result<String> {
-        self.llm.lock().await.query(query).await
+    fn ai_query(&mut self, query: &str) -> anyhow::Result<String> {
+        self.llm.lock().unwrap().query(query)
     }
 }
 

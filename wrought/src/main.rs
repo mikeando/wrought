@@ -19,11 +19,11 @@ pub mod events;
 pub mod file_history;
 pub mod fs_utils;
 pub mod llm;
+pub mod luau_json;
 pub mod metadata;
 pub mod project_status;
 pub mod scripting_luau;
 pub mod scripting_wasm;
-pub mod luau_json;
 
 use binary16::ContentHash;
 use content_store::{ContentStore, FileSystemContentStore};
@@ -38,8 +38,6 @@ use metadata::MetadataKey;
 use project_status::get_project_status;
 use serde::{Deserialize, Serialize};
 use xfs::Xfs;
-
-type AsyncMutex<T> = tokio::sync::Mutex<T>;
 
 pub struct Wrought {
     backend: Arc<Mutex<dyn Backend>>,
@@ -262,7 +260,7 @@ fn find_marker_dir(
     }
 }
 
-async fn cmd_init(cmd: &InitCmd) -> anyhow::Result<()> {
+fn cmd_init(cmd: &InitCmd) -> anyhow::Result<()> {
     let fs = Arc::new(Mutex::new(xfs::OsFs {}));
     let path = &cmd.path;
 
@@ -339,13 +337,13 @@ async fn cmd_init(cmd: &InitCmd) -> anyhow::Result<()> {
     // Now if there is an init script we should run it.
     println!("Running init scripts");
 
-    let bridge = create_bridge(path).await?;
+    let bridge = create_bridge(path)?;
 
     if project_package.join("init.luau").is_file() {
         scripting_luau::run_script(bridge.clone(), fs, &project_package.join("init.luau"))?;
         // TODO: Does this belong in the bridge?
         let event_log = create_event_log(path).unwrap();
-        if let Some(event_group) = bridge.lock().await.get_event_group() {
+        if let Some(event_group) = bridge.lock().unwrap().get_event_group() {
             event_log
                 .lock()
                 .unwrap()
@@ -666,8 +664,8 @@ fn cmd_status(project_root: &Path, cmd: StatusCmd) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn cmd_run_script(
-    bridge: Arc<AsyncMutex<dyn Bridge + Send + 'static>>,
+fn cmd_run_script(
+    bridge: Arc<Mutex<dyn Bridge + Send + 'static>>,
     project_root: &Path,
     cmd: RunScriptCmd,
 ) -> anyhow::Result<()> {
@@ -683,7 +681,6 @@ async fn cmd_run_script(
             .with_context(|| format!("error running lua script {}", cmd.script_name))?;
     } else if extension == "wasm" {
         scripting_wasm::run_script(bridge, fs, &script_path)
-            .await
             .with_context(|| format!("error running WASM script {}", cmd.script_name))?;
     } else {
         bail!(
@@ -716,9 +713,7 @@ pub fn create_event_log(path: &Path) -> anyhow::Result<Arc<Mutex<dyn EventLog>>>
     )))
 }
 
-pub async fn create_bridge(
-    path: &Path,
-) -> anyhow::Result<Arc<AsyncMutex<dyn Bridge + Send + 'static>>> {
+pub fn create_bridge(path: &Path) -> anyhow::Result<Arc<Mutex<dyn Bridge + Send + 'static>>> {
     let fs = Arc::new(Mutex::new(xfs::OsFs {}));
     // Load up an settings in the project settings file - needed
     // to initialise the openAI LLM.
@@ -749,19 +744,19 @@ pub async fn create_bridge(
         ),
         None => None,
     };
-    let llm: Arc<AsyncMutex<dyn LLM + Send + 'static>> = match openai_api_key {
+    let llm: Arc<Mutex<dyn LLM + Send + 'static>> = match openai_api_key {
         Some(openai_api_key) => {
-            let llm = OpenAILLM::create_with_key(openai_api_key, fs, &llm_cache_dir).await?;
-            Arc::new(AsyncMutex::new(llm))
+            let llm = OpenAILLM::create_with_key(openai_api_key, fs, llm_cache_dir)?;
+            Arc::new(Mutex::new(llm))
         }
         None => {
             let llm =
                 InvalidLLM::create_with_error_message("no openAI key specified in settings file");
-            Arc::new(AsyncMutex::new(llm))
+            Arc::new(Mutex::new(llm))
         }
     };
 
-    Ok(Arc::new(AsyncMutex::new(SimpleBridge {
+    Ok(Arc::new(Mutex::new(SimpleBridge {
         root,
         backend,
         event_group: EventGroup::empty(),
@@ -871,8 +866,7 @@ fn cmd_content_store_show(
     Ok(())
 }
 
-#[tokio::main]
-async fn main() {
+fn main() {
     let fs: Arc<Mutex<dyn xfs::Xfs + Send + 'static>> = Arc::new(Mutex::new(xfs::OsFs {}));
 
     let working_dir = fs
@@ -885,7 +879,7 @@ async fn main() {
     // Have to handle Init differntly as it doesn't care about the project_root already
     // existing etc.
     if let Command::Init(cmd) = &args.command {
-        cmd_init(cmd).await.unwrap();
+        cmd_init(cmd).unwrap();
         return;
     }
 
@@ -1001,12 +995,10 @@ async fn main() {
             };
             // eprintln!("Using project root: '{}'", project_root.display());
 
-            let bridge = create_bridge(&project_root).await.unwrap();
-            cmd_run_script(bridge.clone(), &project_root, cmd)
-                .await
-                .unwrap();
+            let bridge = create_bridge(&project_root).unwrap();
+            cmd_run_script(bridge.clone(), &project_root, cmd).unwrap();
             let event_log = create_event_log(&project_root).unwrap();
-            if let Some(event_group) = bridge.lock().await.get_event_group() {
+            if let Some(event_group) = bridge.lock().unwrap().get_event_group() {
                 event_log
                     .lock()
                     .unwrap()

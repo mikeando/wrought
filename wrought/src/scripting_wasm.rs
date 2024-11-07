@@ -11,8 +11,6 @@ use wrought_wasm_bindings::WroughtResult;
 
 use crate::bridge::Bridge;
 
-type AsyncMutex<T> = tokio::sync::Mutex<T>;
-
 // In your host code:
 #[derive(Debug)]
 enum WasmError {
@@ -25,7 +23,7 @@ const ERROR_TYPE_NORMAL: i32 = 1;
 const ERROR_TYPE_PANIC: i32 = 2;
 
 pub struct AppState {
-    pub bridge: Arc<AsyncMutex<dyn Bridge + Send + 'static>>,
+    pub bridge: Arc<Mutex<dyn Bridge + Send + 'static>>,
     pub templating: BTreeMap<i32, tera::Tera>,
     pub next_template_id: i32,
     pub call_buffer: wasmcb::CallBuffer,
@@ -43,12 +41,12 @@ impl wasmcb::ProvidesCallBuffer for CombinedContext {
     }
 }
 
-pub async fn run_script(
-    bridge: Arc<AsyncMutex<dyn Bridge + Send + 'static>>,
+pub fn run_script(
+    bridge: Arc<Mutex<dyn Bridge + Send + 'static>>,
     fs: Arc<Mutex<dyn xfs::Xfs>>,
     script_path: &Path,
 ) -> anyhow::Result<()> {
-    run_script_ex(bridge, fs, script_path, |_| Ok(())).await
+    run_script_ex(bridge, fs, script_path, |_| Ok(()))
 }
 
 struct CustomHostOutputStream {
@@ -59,9 +57,8 @@ struct CustomStdout {
     buffer: Arc<Mutex<Vec<u8>>>,
 }
 
-#[async_trait::async_trait]
 impl Subscribe for CustomHostOutputStream {
-    async fn ready(&mut self) {}
+    fn ready(&mut self) {}
 }
 
 impl HostOutputStream for CustomHostOutputStream {
@@ -98,7 +95,7 @@ impl StdoutStream for CustomStdout {
 //     content_ptr: *const u8,
 //     content_len: usize,
 // );
-async fn wasm_write_file(
+fn wasm_write_file(
     mut caller: Caller<'_, CombinedContext>,
     path_ptr: i32,
     path_len: i32,
@@ -116,7 +113,7 @@ async fn wasm_write_file(
         .0
         .bridge
         .lock()
-        .await
+        .unwrap()
         .write_file(&path, content)
         .map_err(|e| format!("{}", e));
     let out_buf = serde_json::to_vec(&result).unwrap();
@@ -128,7 +125,7 @@ async fn wasm_write_file(
             path_len: usize,
         );
 */
-async fn wasm_read_file(mut caller: Caller<'_, CombinedContext>, path_ptr: i32, path_len: i32) {
+fn wasm_read_file(mut caller: Caller<'_, CombinedContext>, path_ptr: i32, path_len: i32) {
     let memory = caller.get_export("memory").unwrap().into_memory().unwrap();
     let data = memory.data(&caller);
     let path =
@@ -139,7 +136,7 @@ async fn wasm_read_file(mut caller: Caller<'_, CombinedContext>, path_ptr: i32, 
         .0
         .bridge
         .lock()
-        .await
+        .unwrap()
         .read_file(&path)
         .map_err(|e| format!("{}", e));
     let out_buf = serde_json::to_vec(&result).unwrap();
@@ -153,7 +150,7 @@ fn wrought_get_metadata(
     key_len: usize,
 );
 */
-async fn wasm_get_metadata(
+fn wasm_get_metadata(
     mut caller: Caller<'_, CombinedContext>,
     path_ptr: i32,
     path_len: i32,
@@ -172,7 +169,7 @@ async fn wasm_get_metadata(
         .0
         .bridge
         .lock()
-        .await
+        .unwrap()
         .get_metadata(&path, key)
         .map_err(|e| format!("{}", e));
     let out_buf = serde_json::to_vec(&result).unwrap();
@@ -189,7 +186,7 @@ fn wrought_set_metadata(
     content_len: usize
 );
 */
-async fn wasm_set_metadata(
+fn wasm_set_metadata(
     mut caller: Caller<'_, CombinedContext>,
     path_ptr: i32,
     path_len: i32,
@@ -213,7 +210,7 @@ async fn wasm_set_metadata(
         .0
         .bridge
         .lock()
-        .await
+        .unwrap()
         .set_metadata(&path, key, content)
         .map_err(|e| format!("{}", e));
     let out_buf = serde_json::to_vec(&result).unwrap();
@@ -226,7 +223,7 @@ async fn wasm_set_metadata(
     query_len: usize,
 );
 */
-async fn wasm_ai_query(mut caller: Caller<'_, CombinedContext>, query_ptr: i32, query_len: i32) {
+fn wasm_ai_query(mut caller: Caller<'_, CombinedContext>, query_ptr: i32, query_len: i32) {
     let memory = caller.get_export("memory").unwrap().into_memory().unwrap();
     let data = memory.data(&caller);
     let query =
@@ -237,16 +234,15 @@ async fn wasm_ai_query(mut caller: Caller<'_, CombinedContext>, query_ptr: i32, 
         .0
         .bridge
         .lock()
-        .await
+        .unwrap()
         .ai_query(query)
-        .await
         .map_err(|e| format!("{}", e));
     let out_buf = serde_json::to_vec(&result).unwrap();
     caller.data_mut().0.call_buffer.call_buffer = Some(Ok(out_buf));
 }
 
 // fn wrought_init_template();
-async fn wasm_init_template(mut caller: Caller<'_, CombinedContext>) {
+fn wasm_init_template(mut caller: Caller<'_, CombinedContext>) {
     // let memory = caller.get_export("memory").unwrap().into_memory().unwrap();
 
     let app_state = &mut caller.data_mut().0;
@@ -263,7 +259,7 @@ async fn wasm_init_template(mut caller: Caller<'_, CombinedContext>) {
 }
 
 // fn wrought_drop_template(id: i32);
-async fn wasm_drop_template(mut caller: Caller<'_, CombinedContext>, id: i32) {
+fn wasm_drop_template(mut caller: Caller<'_, CombinedContext>, id: i32) {
     let app_state = &mut caller.data_mut().0;
     // TODO: This should probably not be an assert, as that allows plugins to crash the host.
     assert!(app_state.templating.contains_key(&id));
@@ -271,7 +267,7 @@ async fn wasm_drop_template(mut caller: Caller<'_, CombinedContext>, id: i32) {
 }
 
 // fn wrought_add_templates(id: i32, encoded_templates_ptr: *const u8, len: usize);
-async fn wasm_add_templates(
+fn wasm_add_templates(
     mut caller: Caller<'_, CombinedContext>,
     id: i32,
     encoded_templates_ptr: i32,
@@ -304,7 +300,7 @@ async fn wasm_add_templates(
 }
 
 // fn wrought_render_template(id: i32, key_ptr: *const u8, key_len: usize, content_ptr: *const u8, content_len: usize);
-async fn wasm_render_template(
+fn wasm_render_template(
     mut caller: Caller<'_, CombinedContext>,
     id: i32,
     key_ptr: i32,
@@ -338,8 +334,8 @@ async fn wasm_render_template(
 }
 
 // The additional F function is used to add hooks when testing
-pub async fn run_script_ex<F>(
-    bridge: Arc<AsyncMutex<dyn Bridge + Send + 'static>>,
+pub fn run_script_ex<F>(
+    bridge: Arc<Mutex<dyn Bridge + Send + 'static>>,
     fs: Arc<Mutex<dyn xfs::Xfs>>,
     script_path: &Path,
     f: F,
@@ -347,9 +343,8 @@ pub async fn run_script_ex<F>(
 where
     F: FnOnce(&Linker<CombinedContext>) -> anyhow::Result<()>,
 {
-    // Construct the wasm engine with async support enabled.
-    let mut config = Config::new();
-    config.async_support(true);
+    let config = Config::new();
+    // config.async_support(true);
     let engine = Engine::new(&config).with_context(|| "error creating wasm context")?;
     let stdout_buffer = Arc::new(Mutex::new(vec![]));
     let stderr_buffer = Arc::new(Mutex::new(vec![]));
@@ -363,7 +358,7 @@ where
     // Add the WASI preview1 API to the linker (will be implemented in terms of
     // the preview2 API)
     let mut linker: Linker<CombinedContext> = Linker::new(&engine);
-    preview1::add_to_linker_async(&mut linker, |t| &mut t.1)
+    preview1::add_to_linker_sync(&mut linker, |t| &mut t.1)
         .with_context(|| "error installing WASI libraries to core engine")?;
 
     // Add capabilities (e.g. filesystem access) to the WASI preview2 context
@@ -387,141 +382,58 @@ where
     wasmcb::add_to_linker(&mut linker)?;
 
     linker
-        .func_wrap_async(
-            "env",
-            "wrought_write_file",
-            |caller: Caller<'_, CombinedContext>,
-             (path_ptr, path_len, content_ptr, content_len): (i32, i32, i32, i32)| {
-                Box::new(async move {
-                    wasm_write_file(caller, path_ptr, path_len, content_ptr, content_len).await
-                })
-            },
-        )
+        .func_wrap("env", "wrought_write_file", wasm_write_file)
         .with_context(|| "Error installing wrought_write_file function")?;
 
     linker
-        .func_wrap_async(
-            "env",
-            "wrought_read_file",
-            |caller: Caller<'_, CombinedContext>, (path_ptr, path_len): (i32, i32)| {
-                Box::new(async move { wasm_read_file(caller, path_ptr, path_len).await })
-            },
-        )
+        .func_wrap("env", "wrought_read_file", wasm_read_file)
         .with_context(|| "Error installing wrought_read_file function")?;
 
     linker
-        .func_wrap_async(
-            "env",
-            "wrought_get_metadata",
-            |caller: Caller<'_, CombinedContext>,
-             (path_ptr, path_len, key_ptr, key_len): (i32, i32, i32, i32)| {
-                Box::new(async move {
-                    wasm_get_metadata(caller, path_ptr, path_len, key_ptr, key_len).await
-                })
-            },
-        )
+        .func_wrap("env", "wrought_get_metadata", wasm_get_metadata)
         .with_context(|| "Error installing wrought_get_metadata function")?;
 
     linker
-        .func_wrap_async(
-            "env",
-            "wrought_set_metadata",
-            |caller: Caller<'_, CombinedContext>,
-             (path_ptr, path_len, key_ptr, key_len, content_ptr, content_len): (
-                i32,
-                i32,
-                i32,
-                i32,
-                i32,
-                i32,
-            )| {
-                Box::new(async move {
-                    wasm_set_metadata(
-                        caller,
-                        path_ptr,
-                        path_len,
-                        key_ptr,
-                        key_len,
-                        content_ptr,
-                        content_len,
-                    )
-                    .await
-                })
-            },
-        )
+        .func_wrap("env", "wrought_set_metadata", wasm_set_metadata)
         .with_context(|| "Error installing wrought_set_metadata function")?;
 
     linker
-        .func_wrap_async(
-            "env",
-            "wrought_ai_query",
-            |caller: Caller<'_, CombinedContext>, (query_ptr, query_len): (i32, i32)| {
-                Box::new(async move { wasm_ai_query(caller, query_ptr, query_len).await })
-            },
-        )
+        .func_wrap("env", "wrought_ai_query", wasm_ai_query)
         .with_context(|| "Error installing wrought_ai_query function")?;
 
-    linker.func_wrap_async(
-            "env",
-            "wrought_render_template",
-            |caller: Caller<'_, CombinedContext>, (id, key_ptr, key_len, content_ptr, content_len): (i32, i32, i32, i32, i32)| {
-                Box::new(async move { wasm_render_template( caller, id, key_ptr, key_len, content_ptr, content_len).await })
-            },
-        )
+    linker
+        .func_wrap("env", "wrought_render_template", wasm_render_template)
         .with_context(|| "Error installing wrought_render_template function")?;
 
     linker
-        .func_wrap_async(
-            "env",
-            "wrought_drop_template",
-            |caller: Caller<'_, CombinedContext>, (id,): (i32,)| {
-                Box::new(async move { wasm_drop_template(caller, id).await })
-            },
-        )
+        .func_wrap("env", "wrought_drop_template", wasm_drop_template)
         .with_context(|| "Error installing wrought_drop_template function")?;
 
     linker
-        .func_wrap_async(
-            "env",
-            "wrought_init_template",
-            |caller: Caller<'_, CombinedContext>, _params: ()| {
-                Box::new(async move { wasm_init_template(caller).await })
-            },
-        )
+        .func_wrap("env", "wrought_init_template", wasm_init_template)
         .with_context(|| "Error installing wrought_drop_template function")?;
 
     linker
-        .func_wrap_async(
-            "env",
-            "wrought_add_templates",
-            |caller: Caller<'_, CombinedContext>,
-             (id, encoded_templates_ptr, len): (i32, i32, i32)| {
-                Box::new(
-                    async move { wasm_add_templates(caller, id, encoded_templates_ptr, len).await },
-                )
-            },
-        )
+        .func_wrap("env", "wrought_add_templates", wasm_add_templates)
         .with_context(|| "Error installing wrought_add_templates function")?;
 
     let errors = Arc::new(Mutex::new(Vec::new()));
     let errors_clone = errors.clone();
 
-    linker.func_wrap_async(
+    linker.func_wrap(
         "env",
         "host_report_error",
-        move |mut caller: Caller<'_, _>, (error_type, ptr, len): (i32, i32, i32)| {
+        move |mut caller: Caller<'_, _>, error_type: i32, ptr: i32, len: i32| {
             let errors_clone = errors_clone.clone();
-            Box::new(async move {
-                let memory = caller.get_export("memory").unwrap().into_memory().unwrap();
-                let data = memory.data(&caller)[ptr as usize..(ptr + len) as usize].to_vec();
-                let error = String::from_utf8(data).unwrap();
-                let error = match error_type {
-                    ERROR_TYPE_NORMAL => WasmError::Normal(error),
-                    ERROR_TYPE_PANIC => WasmError::Panic(error),
-                    _ => WasmError::Normal(format!("Unknown error type: {}", error)),
-                };
-                errors_clone.lock().unwrap().push(error);
-            })
+            let memory = caller.get_export("memory").unwrap().into_memory().unwrap();
+            let data = memory.data(&caller)[ptr as usize..(ptr + len) as usize].to_vec();
+            let error = String::from_utf8(data).unwrap();
+            let error = match error_type {
+                ERROR_TYPE_NORMAL => WasmError::Normal(error),
+                ERROR_TYPE_PANIC => WasmError::Panic(error),
+                _ => WasmError::Normal(format!("Unknown error type: {}", error)),
+            };
+            errors_clone.lock().unwrap().push(error);
         },
     )?;
 
@@ -539,13 +451,12 @@ where
     let module = Module::new(&engine, &content)?;
 
     let instance = linker
-        .instantiate_async(&mut store, &module)
-        .await
+        .instantiate(&mut store, &module)
         .with_context(|| "Error instantiating WASM engine instance")?;
     let func = instance
         .get_typed_func::<(), i32>(&mut store, "plugin")
         .with_context(|| "Unable to load plugin function")?;
-    let result = func.call_async(&mut store, ()).await;
+    let result = func.call(&mut store, ());
 
     match result {
         Ok(0) => {}
