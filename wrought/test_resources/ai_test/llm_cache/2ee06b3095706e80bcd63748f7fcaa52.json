@@ -1,0 +1,67 @@
+{
+  "request": {
+    "messages": [
+      {
+        "content": "You are an expert book authoring AI.",
+        "role": "system"
+      },
+      {
+        "content": "Generate a overview or high level description for the following book, including a rough outline of the contents:\n\nFill this in with an outline of your document.\n\n* SOMETHING\n\n* SOMETHING ELSE\n",
+        "role": "user"
+      }
+    ],
+    "model": "gpt-4o-mini",
+    "tools": [
+      {
+        "function": {
+          "description": "Create the overview for a new book.",
+          "name": "generate_overview",
+          "parameters": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "properties": {
+              "description": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "description"
+            ],
+            "title": "Overview",
+            "type": "object"
+          }
+        },
+        "type": "function"
+      }
+    ]
+  },
+  "response": {
+    "choices": [
+      {
+        "finish_reason": "tool_calls",
+        "index": 0,
+        "message": {
+          "role": "assistant",
+          "tool_calls": [
+            {
+              "function": {
+                "arguments": "{\"description\":\"\\\"SOMETHING\\\" and \\\"SOMETHING ELSE\\\" are two interconnected narratives exploring the complexities of human relationships and the pursuit of purpose in a modern world. \\n\\nOverview:\\nThis book delves into the emotional landscapes of two protagonists whose lives intertwine through serendipitous events. \\\"SOMETHING\\\" presents the journey of an individual grappling with self-discovery, while \\\"SOMETHING ELSE\\\" highlights the experiences of another navigating the challenges of connection in a digitized society. Together, these narratives offer insights into love, loss, aspiration, and the search for meaning.\\n\\nOutline:\\n1. Introduction\\n   - Setting the stage for both narratives\\n   - Introduction of main themes and conflicts\\n\\n2. SOMETHING\\n   - Chapter 1: The Catalyst\\n     - Introduction of the protagonist and their struggles\\n   - Chapter 2: The Awakening\\n     - Moment of change and realization\\n   - Chapter 3: The Journey\\n     - Exploration of new experiences and challenges\\n   - Chapter 4: The Confrontation\\n     - Climax where the protagonist faces their fears\\n   - Chapter 5: The Resolution\\n     - Closure and personal growth of the protagonist\\n\\n3. SOMETHING ELSE\\n   - Chapter 1: The Introduction\\n     - Introduction of the second protagonist\\n   - Chapter 2: The Encounter\\n     - The moment the two protagonists' paths cross\\n   - Chapter 3: The Connection\\n     - Development of their relationship\\n   - Chapter 4: The Struggle\\n     - External and internal conflicts they face together\\n   - Chapter 5: The Conclusion\\n     - Resolution of conflicts and deeper understanding of each other\\n\\n4. Interconnection\\n   - How the journeys of both protagonists influence each other\\n   - Reflections on the themes of connection and purpose\\n\\n5. Conclusion\\n   - Final thoughts on the overarching themes\\n   - Encouragement for readers to reflect on their own journeys\\n\\nThis book serves as a blend of fiction and introspection, urging readers to consider their own paths in the search for identity and connection.\"}",
+                "name": "generate_overview"
+              },
+              "id": "call_xk1zK9l23b9lVzNeRIbvlbM8"
+            }
+          ]
+        }
+      }
+    ],
+    "created": 1731491786,
+    "id": "chatcmpl-AT4Oo2PivBd3UMOwfS5LQ0GKskjXX",
+    "model": "gpt-4o-mini-2024-07-18",
+    "object": "chat.completion",
+    "system_fingerprint": "fp_0ba0d124f1",
+    "usage": {
+      "completion_tokens": 455,
+      "prompt_tokens": 99,
+      "total_tokens": 554
+    }
+  }
+}

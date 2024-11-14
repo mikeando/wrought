@@ -13,5 +13,12 @@ ${wrought} init --package=test "$PROJECT_DIR"
 echo "INSTALLING A DUMMY OPEN AI KEY"
 echo 'openai_api_key = "NO-SUCH-KEY"' >> ${PROJECT_DIR}/.wrought/settings.toml
 
+echo "INSTALLING THE AI CACHE"
+# This means we dont actually need to hit openAI as the query is cached.
+cp -r test_resources/ai_test/llm_cache/* ${PROJECT_DIR}/.wrought/llm_cache/
+
+echo "CREATING THE OUTLINE"
+cp -r test_resources/ai_test/example_outline.md ${PROJECT_DIR}/outline.md
+
 echo "RUNNING SIMPLE LUAU SCRIPT"
 ${wrought} --project-root=${PROJECT_DIR} run-script test/ai_tool_test.luau

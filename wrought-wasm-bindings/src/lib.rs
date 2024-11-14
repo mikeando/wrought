@@ -33,7 +33,6 @@ mod client {
         );
         fn wrought_ai_query(query_ptr: *const u8, query_len: usize);
 
-        // TODO: Expose these in the Bridge
         fn wrought_init_template();
         fn wrought_drop_template(id: i32);
         fn wrought_add_templates(id: i32, encoded_templates_ptr: *const u8, len: usize);
@@ -44,6 +43,21 @@ mod client {
             content_ptr: *const u8,
             content_len: usize,
         );
+
+        fn wrought_ai_message();
+        fn wrought_ai_message_request(id: i32);
+        fn wrought_ai_message_add_tool(
+            id: i32,
+            description_ptr: *const u8,
+            description_len: usize,
+            name_ptr: *const u8,
+            name_len: usize,
+            schema_ptr: *const u8,
+            schema_len: usize,
+        );
+        fn wrought_ai_message_set_user_message(id: i32, as_ptr: *const u8, len: usize);
+        fn wrought_ai_message_set_system_message(id: i32, as_ptr: *const u8, len: usize);
+        fn wrought_drop_ai_message(id: i32);
     }
 
     pub struct Wrought {}
@@ -150,6 +164,19 @@ mod client {
             let result: WroughtResult<i32> = serde_json::from_slice(&out_buf).unwrap();
             Ok(WroughtTemplate { id: result? })
         }
+
+        pub fn ai_message(&mut self) -> WroughtResult<WroughtAiMessage> {
+            let len = unsafe {
+                wrought_ai_message();
+                wasmcb::get_call_buffer_len()
+            };
+            let mut out_buf = vec![0u8; len];
+            unsafe {
+                wasmcb::read_call_buffer(out_buf.as_mut_ptr(), out_buf.len());
+            }
+            let result: WroughtResult<i32> = serde_json::from_slice(&out_buf).unwrap();
+            Ok(WroughtAiMessage { id: result? })
+        }
     }
 
     pub struct WroughtTemplate {
@@ -199,6 +226,95 @@ mod client {
         fn drop(&mut self) {
             unsafe {
                 wrought_drop_template(self.id);
+            }
+        }
+    }
+
+    pub struct WroughtAiMessage {
+        id: i32,
+    }
+
+    impl WroughtAiMessage {
+        pub fn set_system_message(&mut self, message: &str) -> WroughtResult<()> {
+            let message_buf = message.as_bytes();
+            let len = unsafe {
+                wrought_ai_message_set_system_message(
+                    self.id,
+                    message_buf.as_ptr(),
+                    message_buf.len(),
+                );
+                wasmcb::get_call_buffer_len()
+            };
+            let mut out_buf = vec![08; len];
+            unsafe {
+                wasmcb::read_call_buffer(out_buf.as_mut_ptr(), out_buf.len());
+            }
+            serde_json::from_slice(&out_buf).unwrap()
+        }
+
+        pub fn add_user_message(&mut self, message: &str) -> WroughtResult<()> {
+            let message_buf = message.as_bytes();
+            let len = unsafe {
+                wrought_ai_message_set_user_message(
+                    self.id,
+                    message_buf.as_ptr(),
+                    message_buf.len(),
+                );
+                wasmcb::get_call_buffer_len()
+            };
+            let mut out_buf = vec![08; len];
+            unsafe {
+                wasmcb::read_call_buffer(out_buf.as_mut_ptr(), out_buf.len());
+            }
+            serde_json::from_slice(&out_buf).unwrap()
+        }
+
+        pub fn add_tool(
+            &mut self,
+            description: &str,
+            name: &str,
+            schema: &serde_json::Value,
+        ) -> WroughtResult<()> {
+            let description_buf = description.as_bytes();
+            let name_buf = name.as_bytes();
+            let schema_data = serde_json::to_vec(schema).map_err(|e| e.to_string())?;
+
+            let len = unsafe {
+                wrought_ai_message_add_tool(
+                    self.id,
+                    description_buf.as_ptr(),
+                    description_buf.len(),
+                    name_buf.as_ptr(),
+                    name_buf.len(),
+                    schema_data.as_ptr(),
+                    schema_data.len(),
+                );
+                wasmcb::get_call_buffer_len()
+            };
+            let mut out_buf = vec![08; len];
+            unsafe {
+                wasmcb::read_call_buffer(out_buf.as_mut_ptr(), out_buf.len());
+            }
+            serde_json::from_slice(&out_buf).unwrap()
+        }
+
+        pub fn request(&mut self) -> WroughtResult<serde_json::Value> {
+            let len = unsafe {
+                wrought_ai_message_request(self.id);
+                wasmcb::get_call_buffer_len()
+            };
+            let mut out_buf = vec![08; len];
+            unsafe {
+                wasmcb::read_call_buffer(out_buf.as_mut_ptr(), out_buf.len());
+            }
+            serde_json::from_slice(&out_buf).unwrap()
+        }
+    }
+
+    impl Drop for WroughtAiMessage {
+        fn drop(&mut self) {
+            unsafe {
+                wrought_drop_ai_message(self.id);
             }
         }
     }
