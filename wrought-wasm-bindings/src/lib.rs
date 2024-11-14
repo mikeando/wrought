@@ -37,7 +37,13 @@ mod client {
         fn wrought_init_template();
         fn wrought_drop_template(id: i32);
         fn wrought_add_templates(id: i32, encoded_templates_ptr: *const u8, len: usize);
-        fn wrought_render_template(id: i32, key_ptr: *const u8, key_len: usize, content_ptr: *const u8, content_len: usize);
+        fn wrought_render_template(
+            id: i32,
+            key_ptr: *const u8,
+            key_len: usize,
+            content_ptr: *const u8,
+            content_len: usize,
+        );
     }
 
     pub struct Wrought {}
@@ -144,7 +150,6 @@ mod client {
             let result: WroughtResult<i32> = serde_json::from_slice(&out_buf).unwrap();
             Ok(WroughtTemplate { id: result? })
         }
-
     }
 
     pub struct WroughtTemplate {
@@ -152,10 +157,8 @@ mod client {
     }
 
     impl WroughtTemplate {
-
         pub fn add_template(&mut self, key: &str, template: &str) -> WroughtResult<()> {
             self.add_templates(&[(key, template)])
-
         }
 
         pub fn add_templates(&mut self, templates: &[(&str, &str)]) -> WroughtResult<()> {
@@ -175,7 +178,13 @@ mod client {
             let content_json = serde_json::to_vec(values).map_err(|e| e.to_string())?;
             let key_buf = key.as_bytes();
             let len = unsafe {
-                wrought_render_template(self.id, key_buf.as_ptr(), key_buf.len(), content_json.as_ptr(), content_json.len());
+                wrought_render_template(
+                    self.id,
+                    key_buf.as_ptr(),
+                    key_buf.len(),
+                    content_json.as_ptr(),
+                    content_json.len(),
+                );
                 wasmcb::get_call_buffer_len()
             };
             let mut out_buf = vec![0u8; len];
@@ -193,10 +202,7 @@ mod client {
             }
         }
     }
-
 }
-
-
 
 #[cfg(not(feature = "host"))]
 pub use client::*;
