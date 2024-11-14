@@ -8,7 +8,7 @@ use crate::{
     events::{
         Event, EventGroup, GetMetadataEvent, ReadFileEvent, SetMetadataEvent, WriteFileEvent,
     },
-    llm::LLM,
+    llm::{AiMessage, LLM},
     metadata::{MetadataEntry, MetadataKey},
 };
 
@@ -19,6 +19,8 @@ pub trait Bridge {
     fn set_metadata(&mut self, path: &Path, key: &str, value: &str) -> anyhow::Result<()>;
     fn ai_query(&mut self, query: &str) -> anyhow::Result<String>;
     fn get_event_group(&self) -> Option<EventGroup>;
+    fn ai_message(&mut self) -> anyhow::Result<AiMessage>;
+    fn send_ai_message(&mut self, message: &AiMessage) -> anyhow::Result<serde_json::Value>;
 }
 
 pub struct SimpleBridge {
@@ -93,6 +95,14 @@ impl Bridge for SimpleBridge {
 
     fn ai_query(&mut self, query: &str) -> anyhow::Result<String> {
         self.llm.lock().unwrap().query(query)
+    }
+
+    fn ai_message(&mut self) -> anyhow::Result<AiMessage> {
+        Ok(AiMessage::default())
+    }
+
+    fn send_ai_message(&mut self, message: &AiMessage) -> anyhow::Result<serde_json::Value> {
+        self.llm.lock().unwrap().send_ai_message(message)
     }
 }
 

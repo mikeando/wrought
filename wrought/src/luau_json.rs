@@ -52,6 +52,12 @@ impl From<mlua::Error> for ConversionError {
     }
 }
 
+impl From<ConversionError> for mlua::Error {
+    fn from(e: ConversionError) -> Self {
+        mlua::Error::runtime(format!("Failed json<->lua conversion: {}", e))
+    }
+}
+
 // Now we can update the conversion functions to use these constructors:
 
 pub fn lua_value_to_json_value(

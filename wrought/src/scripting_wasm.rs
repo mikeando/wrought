@@ -3,10 +3,9 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use anyhow::Context;
-use bytes::Bytes;
 use wasmtime::{Caller, Config, Engine, Linker, Module, Store};
 use wasmtime_wasi::preview1::{self, WasiP1Ctx};
-use wasmtime_wasi::{HostOutputStream, StdoutStream, StreamResult, Subscribe, WasiCtxBuilder};
+use wasmtime_wasi::WasiCtxBuilder;
 use wrought_wasm_bindings::WroughtResult;
 
 use crate::bridge::Bridge;
@@ -47,45 +46,6 @@ pub fn run_script(
     script_path: &Path,
 ) -> anyhow::Result<()> {
     run_script_ex(bridge, fs, script_path, |_| Ok(()))
-}
-
-struct CustomHostOutputStream {
-    buffer: Arc<Mutex<Vec<u8>>>,
-}
-
-struct CustomStdout {
-    buffer: Arc<Mutex<Vec<u8>>>,
-}
-
-impl Subscribe for CustomHostOutputStream {
-    fn ready(&mut self) {}
-}
-
-impl HostOutputStream for CustomHostOutputStream {
-    fn write(&mut self, bytes: Bytes) -> StreamResult<()> {
-        self.buffer.lock().unwrap().extend_from_slice(&bytes);
-        StreamResult::Ok(())
-    }
-
-    fn flush(&mut self) -> StreamResult<()> {
-        StreamResult::Ok(())
-    }
-
-    fn check_write(&mut self) -> StreamResult<usize> {
-        StreamResult::Ok(usize::MAX)
-    }
-}
-
-impl StdoutStream for CustomStdout {
-    fn stream(&self) -> Box<dyn HostOutputStream> {
-        Box::new(CustomHostOutputStream {
-            buffer: self.buffer.clone(),
-        })
-    }
-
-    fn isatty(&self) -> bool {
-        true
-    }
 }
 
 // exposed in the bindings as:
@@ -348,12 +308,6 @@ where
     let engine = Engine::new(&config).with_context(|| "error creating wasm context")?;
     let stdout_buffer = Arc::new(Mutex::new(vec![]));
     let stderr_buffer = Arc::new(Mutex::new(vec![]));
-    let custom_stdout = CustomStdout {
-        buffer: stdout_buffer.clone(),
-    };
-    let custom_stderr = CustomStdout {
-        buffer: stderr_buffer.clone(),
-    };
 
     // Add the WASI preview1 API to the linker (will be implemented in terms of
     // the preview2 API)

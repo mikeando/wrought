@@ -21,6 +21,7 @@ type AsyncMutex<T> = tokio::sync::Mutex<T>;
 
 enum AiWorkRequest {
     Query(AiWorkQueryRequest),
+    Message(AiWorkMessageRequest),
 }
 
 struct AiWorkQueryRequest {
@@ -30,6 +31,15 @@ struct AiWorkQueryRequest {
 
 struct AiQueryResponse {
     result: anyhow::Result<String>,
+}
+
+struct AiWorkMessageRequest {
+    message: AiMessage,
+    response_channel: tokio::sync::oneshot::Sender<AiMessageResponse>,
+}
+
+struct AiMessageResponse {
+    result: anyhow::Result<serde_json::Value>,
 }
 
 pub struct AiSettings {
@@ -75,6 +85,52 @@ async fn run_ai_worker_query(
     Ok(())
 }
 
+async fn run_ai_worker_message_internal(
+    worker: &mut AiWorker,
+    message: &AiMessage,
+) -> anyhow::Result<serde_json::Value> {
+    let mut messages = vec![];
+    if let Some(system_message) = &message.system_message {
+        messages.push(rust_openai::types::Message::system_message(system_message))
+    }
+    for m in &message.user_messages {
+        messages.push(rust_openai::types::Message::user_message(m))
+    }
+    let request: rust_openai::types::ChatRequest =
+        rust_openai::types::ChatRequest::new(rust_openai::types::ModelId::Gpt4oMini, messages)
+            .with_tools(vec![message.tool.clone().unwrap()]);
+    // .with_max_tokens(Some(ai_options.max_tokens));
+
+    let (response, _) = worker.llm.make_request(&request).await?;
+
+    let result: serde_json::Value = serde_json::from_str(
+        &response.choices[0]
+            .message
+            .as_assistant_message()
+            .as_ref()
+            .unwrap()
+            .tool_calls
+            .as_ref()
+            .unwrap()[0]
+            .function
+            .arguments,
+    )?;
+    Ok(result)
+}
+
+async fn run_ai_worker_message(
+    worker: &mut AiWorker,
+    request: AiWorkMessageRequest,
+) -> anyhow::Result<()> {
+    // Note we dont ues ? here as we want to forward failures down the channel.
+    let result = run_ai_worker_message_internal(worker, &request.message).await;
+    request
+        .response_channel
+        .send(AiMessageResponse { result })
+        .map_err(|_| anyhow::anyhow!("unable to send response"))?;
+    Ok(())
+}
+
 async fn run_ai_worker(
     settings: AiSettings,
     rx: tokio::sync::mpsc::Receiver<AiWorkRequest>,
@@ -98,6 +154,9 @@ async fn run_ai_worker(
         match request {
             AiWorkRequest::Query(query) => {
                 run_ai_worker_query(&mut worker, query).await?;
+            }
+            AiWorkRequest::Message(message) => {
+                run_ai_worker_message(&mut worker, message).await?;
             }
         };
     }
@@ -163,10 +222,24 @@ impl LLM for OpenAILLM {
         let response = response_rx.blocking_recv().unwrap();
         response.result
     }
+
+    fn send_ai_message(&mut self, message: &AiMessage) -> anyhow::Result<serde_json::Value> {
+        let (response_tx, response_rx) = tokio::sync::oneshot::channel();
+        let request = AiWorkRequest::Message(AiWorkMessageRequest {
+            message: message.clone(),
+            response_channel: response_tx,
+        });
+        self.channel.blocking_send(request)?;
+
+        // Wait for response synchronously
+        let response = response_rx.blocking_recv().unwrap();
+        response.result
+    }
 }
 
 pub trait LLM {
     fn query(&mut self, query: &str) -> anyhow::Result<String>;
+    fn send_ai_message(&mut self, message: &AiMessage) -> anyhow::Result<serde_json::Value>;
 }
 
 pub struct OpenAIFsStub {
@@ -230,5 +303,44 @@ impl InvalidLLM {
 impl LLM for InvalidLLM {
     fn query(&mut self, _query: &str) -> anyhow::Result<String> {
         bail!("Unable to access LLM: {}", self.error_message)
+    }
+
+    fn send_ai_message(&mut self, _message: &AiMessage) -> anyhow::Result<serde_json::Value> {
+        bail!("Unable to access LLM: {}", self.error_message)
+    }
+}
+
+#[derive(Default, Clone)]
+pub struct AiMessage {
+    system_message: Option<String>,
+    user_messages: Vec<String>,
+    tool: Option<rust_openai::types::Tool>,
+}
+
+impl AiMessage {
+    pub(crate) fn set_system_message(&mut self, system_message: &str) -> anyhow::Result<()> {
+        self.system_message = Some(system_message.to_string());
+        Ok(())
+    }
+
+    pub(crate) fn add_user_message(&mut self, user_message: &str) -> anyhow::Result<()> {
+        self.user_messages.push(user_message.to_string());
+        Ok(())
+    }
+
+    pub(crate) fn add_tool(
+        &mut self,
+        tool_description: &str,
+        tool_name: &str,
+        tool_schema: &str,
+    ) -> anyhow::Result<()> {
+        let schema_value: serde_json::Value = serde_json::from_str(tool_schema)?;
+        let schema = rust_openai::types::JSONSchema(schema_value);
+        self.tool = Some(rust_openai::types::Tool {
+            description: Some(tool_description.to_string()),
+            name: tool_name.to_string(),
+            parameters: Some(schema),
+        });
+        Ok(())
     }
 }
