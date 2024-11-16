@@ -24,6 +24,7 @@ pub mod metadata;
 pub mod project_status;
 pub mod scripting_luau;
 pub mod scripting_wasm;
+pub mod knowledgebase;
 
 use binary16::ContentHash;
 use content_store::{ContentStore, FileSystemContentStore};
