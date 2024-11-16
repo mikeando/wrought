@@ -107,3 +107,18 @@ pub mod tests {
         assert_eq!(result, content);
     }
 }
+
+#[cfg(test)]
+pub mod mocks {
+    use super::*;
+    use mockall::mock;
+
+    mock! {
+        pub ContentStore {}
+
+        impl ContentStore for ContentStore {
+            fn store(&mut self, value: &[u8]) -> anyhow::Result<ContentHash>;
+            fn retrieve(&self, hash: ContentHash) -> anyhow::Result<Option<Vec<u8>>>;
+        }
+    }
+}
