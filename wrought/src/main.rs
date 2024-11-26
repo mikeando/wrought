@@ -18,13 +18,13 @@ pub mod event_log;
 pub mod events;
 pub mod file_history;
 pub mod fs_utils;
-pub mod knowledgebase;
 pub mod llm;
 pub mod luau_json;
 pub mod metadata;
 pub mod project_status;
 pub mod scripting_luau;
 pub mod scripting_wasm;
+pub mod kb;
 
 use binary16::ContentHash;
 use content_store::{ContentStore, FileSystemContentStore};
