@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::HashMap,
     sync::{Arc, Mutex},
 };
 
@@ -71,8 +71,11 @@ impl KnowledgeBase {
     }
 }
 
+#[derive(Debug)]
 pub enum KnowledgeBaseError {
     Unknown,
+    DocumentAlreadyExists,
+    DocumentNotFound,
 }
 
 #[cfg(test)]
