@@ -117,7 +117,7 @@ pub enum DocumentStreamIterator {
     Empty,
     Filter(DocumentStreamFilter, Box<DocumentStreamIterator>),
     Sequence(VecDeque<DocumentStreamIterator>),
-    Delayed(DocumentStreamIteratorDelayed)
+    Delayed(DocumentStreamIteratorDelayed),
 }
 
 impl DocumentStreamIterator {
@@ -158,10 +158,8 @@ impl Iterator for DocumentStreamIteratorDelayed {
                 let e = it.next();
                 *self = DocumentStreamIteratorDelayed::Evaluated(Box::new(it));
                 return e;
-            },
-            DocumentStreamIteratorDelayed::Evaluated(it) => {
-                it.next()
             }
+            DocumentStreamIteratorDelayed::Evaluated(it) => it.next(),
         }
     }
 }

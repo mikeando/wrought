@@ -1,6 +1,6 @@
 use crate::kb::knowledgebase::KnowledgeBaseError;
 
-use super::document::{DocumentId, Document};
+use super::document::{Document, DocumentId};
 
 pub trait KnowledgeBaseImpl {
     fn all_docs(&self) -> Vec<Document>;

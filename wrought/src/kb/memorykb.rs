@@ -1,4 +1,8 @@
-use super::{document::{Document, DocumentId}, kb_impl::KnowledgeBaseImpl, knowledgebase::KnowledgeBaseError};
+use super::{
+    document::{Document, DocumentId},
+    kb_impl::KnowledgeBaseImpl,
+    knowledgebase::KnowledgeBaseError,
+};
 
 pub struct InMemoryKnowledgeBase {
     documents: Vec<Document>,
@@ -6,13 +10,11 @@ pub struct InMemoryKnowledgeBase {
 
 impl InMemoryKnowledgeBase {
     pub fn new() -> Self {
-        InMemoryKnowledgeBase {
-            documents: vec![]
-        }
+        InMemoryKnowledgeBase { documents: vec![] }
     }
 }
 
-impl KnowledgeBaseImpl for InMemoryKnowledgeBase {    
+impl KnowledgeBaseImpl for InMemoryKnowledgeBase {
     fn all_docs(&self) -> Vec<Document> {
         self.documents.clone()
     }

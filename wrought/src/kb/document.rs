@@ -1,11 +1,14 @@
-use std::{collections::HashMap, sync::{Arc, Mutex}};
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex},
+};
 
 use crate::{binary16::ContentHash, content_store::ContentStore};
 
 #[derive(Clone)]
 pub struct DocumentId {
     // TODO: unpub this
-    pub id: ContentHash
+    pub id: ContentHash,
 }
 
 #[derive(Clone)]
@@ -35,7 +38,10 @@ impl Document {
     }
 
     pub fn content(&self) -> anyhow::Result<Option<Vec<u8>>> {
-        self.content_store.lock().unwrap().retrieve(self.id.id.clone())
+        self.content_store
+            .lock()
+            .unwrap()
+            .retrieve(self.id.id.clone())
     }
 
     /// Get metadata by key.

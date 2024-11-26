@@ -2,11 +2,10 @@
 pub mod internal {
     use mockall::mock;
 
-    use crate::kb::kb_impl::KnowledgeBaseImpl;
     use crate::kb::document::Document;
     use crate::kb::document::DocumentId;
+    use crate::kb::kb_impl::KnowledgeBaseImpl;
     use crate::kb::knowledgebase::KnowledgeBaseError;
-
 
     mock! {
         pub KnowledgeBaseImpl {}

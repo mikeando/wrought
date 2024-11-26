@@ -5,8 +5,14 @@ use std::{
 
 use crate::{binary16::ContentHash, content_store::ContentStore};
 
-use super::{docstream::{DocumentStream, DocumentStreamInfo, DocumentStreamIterator, DocumentStreamIteratorDelayed}, document::DocumentId, kb_impl::KnowledgeBaseImpl};
 use super::document::Document;
+use super::{
+    docstream::{
+        DocumentStream, DocumentStreamInfo, DocumentStreamIterator, DocumentStreamIteratorDelayed,
+    },
+    document::DocumentId,
+    kb_impl::KnowledgeBaseImpl,
+};
 
 #[derive(Clone)]
 pub struct KnowledgeBase {
@@ -21,7 +27,11 @@ impl KnowledgeBase {
         metadata: HashMap<String, String>,
     ) -> anyhow::Result<Document> {
         let hash = self.content_store.lock().unwrap().store(content)?;
-        let document = Document::new(DocumentId { id: hash }, metadata, self.content_store.clone());
+        let document = Document::new(
+            DocumentId { id: hash },
+            metadata,
+            self.content_store.clone(),
+        );
         // Optionally index or persist metadata here
         Ok(document)
     }
@@ -40,7 +50,15 @@ impl KnowledgeBase {
                 DocumentStreamIterator::filter(f.clone(), self.create_iter(info))
             }
             DocumentStreamInfo::Sequence(infos) => DocumentStreamIterator::sequence(
-                infos.iter().map(|info| DocumentStreamIterator::Delayed(DocumentStreamIteratorDelayed::Unevaluated(self.clone(), info.clone()))).collect(),
+                infos
+                    .iter()
+                    .map(|info| {
+                        DocumentStreamIterator::Delayed(DocumentStreamIteratorDelayed::Unevaluated(
+                            self.clone(),
+                            info.clone(),
+                        ))
+                    })
+                    .collect(),
             ),
         }
     }
@@ -54,19 +72,24 @@ impl KnowledgeBase {
 }
 
 pub enum KnowledgeBaseError {
-    Unknown
+    Unknown,
 }
 
 #[cfg(test)]
 pub mod test {
 
-    use crate::{content_store::mocks::MockContentStore, kb::{docstream::DocumentStreamFilter, mock::internal::MockKnowledgeBaseImpl}};
+    use crate::{
+        content_store::mocks::MockContentStore,
+        kb::{docstream::DocumentStreamFilter, mock::internal::MockKnowledgeBaseImpl},
+    };
 
     use super::*;
 
     fn dummy_doc(content_store: Arc<Mutex<dyn ContentStore + Send + Sync>>) -> Document {
         Document::new(
-            DocumentId{id: ContentHash::zero()},
+            DocumentId {
+                id: ContentHash::zero(),
+            },
             HashMap::new(),
             content_store,
         )
@@ -103,7 +126,9 @@ pub mod test {
     pub fn document_retrieves_content() {
         let mut cs = MockContentStore::new();
         let content = "Hello, world!";
-        let docid = DocumentId{id:ContentHash::from_content("some content".as_bytes())};
+        let docid = DocumentId {
+            id: ContentHash::from_content("some content".as_bytes()),
+        };
 
         cs.expect_retrieve()
             .with(mockall::predicate::eq(docid.id.clone()))
@@ -148,7 +173,9 @@ pub mod test {
     #[test]
     pub fn missing_content_in_store() {
         let mut cs = MockContentStore::new();
-        let docid = DocumentId{id:ContentHash::from_content("some content".as_bytes())};
+        let docid = DocumentId {
+            id: ContentHash::from_content("some content".as_bytes()),
+        };
 
         cs.expect_retrieve()
             .with(mockall::predicate::eq(docid.id.clone()))
@@ -189,12 +216,10 @@ pub mod test {
         let mut metadata = HashMap::new();
         metadata.insert("author".to_string(), "Alice".to_string());
 
-        let docid = DocumentId{id:ContentHash::from_content("some content".as_bytes())};
-        let mut document = Document::new(
-            docid,
-            metadata.clone(),
-            cs,
-        );
+        let docid = DocumentId {
+            id: ContentHash::from_content("some content".as_bytes()),
+        };
+        let mut document = Document::new(docid, metadata.clone(), cs);
 
         assert_eq!(document.get_metadata("author"), Some(&"Alice".to_string()));
 
@@ -205,7 +230,9 @@ pub mod test {
     #[test]
     pub fn content_store_error_propagation() {
         let cs = Arc::new(Mutex::new(MockContentStore::new()));
-        let docid = DocumentId{id:ContentHash::from_content("some hash".as_bytes())};
+        let docid = DocumentId {
+            id: ContentHash::from_content("some hash".as_bytes()),
+        };
 
         cs.lock()
             .unwrap()
@@ -219,4 +246,3 @@ pub mod test {
         assert_eq!(err.to_string(), "Store error");
     }
 }
-
