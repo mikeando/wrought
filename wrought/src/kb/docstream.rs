@@ -87,7 +87,12 @@ impl DocumentStream {
 #[derive(Clone)]
 pub enum DocumentStreamFilter {
     And(Box<DocumentStreamFilter>, Box<DocumentStreamFilter>),
+    Or(Box<DocumentStreamFilter>, Box<DocumentStreamFilter>),
+    Not(Box<DocumentStreamFilter>),
     FilterFn(Arc<dyn Fn(&Document) -> bool>),
+    MetadataEquals(String, String),
+    MetadataContains(String, String),
+    MetadataRegex(String, String),
 }
 
 impl DocumentStreamFilter {
@@ -95,10 +100,44 @@ impl DocumentStreamFilter {
         DocumentStreamFilter::And(Box::new(f1), Box::new(f2))
     }
 
-    fn should_keep(&self, v: &Document) -> bool {
+    pub fn or(f1: DocumentStreamFilter, f2: DocumentStreamFilter) -> DocumentStreamFilter {
+        DocumentStreamFilter::Or(Box::new(f1), Box::new(f2))
+    }
+
+    pub fn not(f: DocumentStreamFilter) -> DocumentStreamFilter {
+        DocumentStreamFilter::Not(Box::new(f))
+    }
+
+    pub fn metadata_equals(key: String, value: String) -> DocumentStreamFilter {
+        DocumentStreamFilter::MetadataEquals(key, value)
+    }
+
+    pub fn metadata_contains(key: String, value: String) -> DocumentStreamFilter {
+        DocumentStreamFilter::MetadataContains(key, value)
+    }
+
+    pub fn metadata_regex(key: String, regex: String) -> DocumentStreamFilter {
+        DocumentStreamFilter::MetadataRegex(key, regex)
+    }
+
+    pub fn should_keep(&self, v: &Document) -> bool {
         match self {
             DocumentStreamFilter::And(f1, f2) => f1.should_keep(v) && f2.should_keep(v),
+            DocumentStreamFilter::Or(f1, f2) => f1.should_keep(v) || f2.should_keep(v),
+            DocumentStreamFilter::Not(f) => !f.should_keep(v),
             DocumentStreamFilter::FilterFn(f) => f(v),
+            DocumentStreamFilter::MetadataEquals(key, value) => {
+                v.get_metadata(key).map_or(false, |v| v == value)
+            }
+            DocumentStreamFilter::MetadataContains(key, value) => {
+                v.get_metadata(key).map_or(false, |v| v.contains(value))
+            }
+            DocumentStreamFilter::MetadataRegex(key, regex) => {
+                use regex::Regex;
+                v.get_metadata(key)
+                    .and_then(|v| Regex::new(regex).ok().map(|r| r.is_match(v)))
+                    .unwrap_or(false)
+            }
         }
     }
 }
@@ -157,7 +196,7 @@ impl Iterator for DocumentStreamIteratorDelayed {
                 let mut it = kb.create_iter(info);
                 let e = it.next();
                 *self = DocumentStreamIteratorDelayed::Evaluated(Box::new(it));
-                return e;
+                e
             }
             DocumentStreamIteratorDelayed::Evaluated(it) => it.next(),
         }
@@ -172,7 +211,7 @@ impl Iterator for DocumentStreamIterator {
             DocumentStreamIterator::ListOfDocs(v) => v.next(),
             DocumentStreamIterator::Empty => None,
             DocumentStreamIterator::Filter(f, it) => {
-                while let Some(e) = it.next() {
+                for e in it.by_ref() {
                     if f.should_keep(&e) {
                         return Some(e);
                     }
@@ -191,5 +230,123 @@ impl Iterator for DocumentStreamIterator {
             },
             DocumentStreamIterator::Delayed(delayed) => delayed.next(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        binary16::ContentHash,
+        content_store::mocks::MockContentStore,
+        kb::document::{Document, DocumentId},
+    };
+    use std::sync::Arc;
+    use std::{collections::HashMap, sync::Mutex};
+
+    fn create_test_document(
+        metadata: HashMap<String, String>,
+        content_store: Arc<Mutex<MockContentStore>>,
+    ) -> Document {
+        let hash = ContentHash::from_content(b"test content");
+        let doc_id = DocumentId { id: hash };
+
+        Document::new(doc_id, metadata, content_store)
+    }
+
+    #[test]
+    fn test_metadata_equals_filter() {
+        let content_store = Arc::new(Mutex::new(MockContentStore::new()));
+
+        let mut metadata = HashMap::new();
+        metadata.insert("author".to_string(), "Alice".to_string());
+
+        let doc = create_test_document(metadata, content_store);
+
+        let filter =
+            DocumentStreamFilter::metadata_equals("author".to_string(), "Alice".to_string());
+
+        assert!(filter.should_keep(&doc));
+
+        let wrong_filter =
+            DocumentStreamFilter::metadata_equals("author".to_string(), "Bob".to_string());
+
+        assert!(!wrong_filter.should_keep(&doc));
+    }
+
+    #[test]
+    fn test_metadata_contains_filter() {
+        let content_store = Arc::new(Mutex::new(MockContentStore::new()));
+
+        let mut metadata = HashMap::new();
+        metadata.insert("tags".to_string(), "rust programming language".to_string());
+
+        let doc = create_test_document(metadata, content_store);
+
+        let filter =
+            DocumentStreamFilter::metadata_contains("tags".to_string(), "rust".to_string());
+
+        assert!(filter.should_keep(&doc));
+
+        let wrong_filter =
+            DocumentStreamFilter::metadata_contains("tags".to_string(), "python".to_string());
+
+        assert!(!wrong_filter.should_keep(&doc));
+    }
+
+    #[test]
+    fn test_metadata_regex_filter() {
+        let content_store = Arc::new(Mutex::new(MockContentStore::new()));
+
+        let mut metadata = HashMap::new();
+        metadata.insert("email".to_string(), "alice@example.com".to_string());
+
+        let doc = create_test_document(metadata, content_store);
+
+        let filter = DocumentStreamFilter::metadata_regex(
+            "email".to_string(),
+            r"^alice@.*\.com$".to_string(),
+        );
+
+        assert!(filter.should_keep(&doc));
+
+        let wrong_filter =
+            DocumentStreamFilter::metadata_regex("email".to_string(), r"^bob@.*\.org$".to_string());
+
+        assert!(!wrong_filter.should_keep(&doc));
+    }
+
+    #[test]
+    fn test_complex_filter_combinations() {
+        let content_store = Arc::new(Mutex::new(MockContentStore::new()));
+
+        let mut metadata1 = HashMap::new();
+        metadata1.insert("author".to_string(), "Alice".to_string());
+        metadata1.insert("tags".to_string(), "rust programming".to_string());
+
+        let mut metadata2 = HashMap::new();
+        metadata2.insert("author".to_string(), "Bob".to_string());
+        metadata2.insert("tags".to_string(), "python programming".to_string());
+
+        let doc1 = create_test_document(metadata1, content_store.clone());
+        let doc2 = create_test_document(metadata2, content_store);
+
+        // Filter for Rust documents by Alice
+        let filter = DocumentStreamFilter::and(
+            DocumentStreamFilter::metadata_equals("author".to_string(), "Alice".to_string()),
+            DocumentStreamFilter::metadata_contains("tags".to_string(), "rust".to_string()),
+        );
+
+        assert!(filter.should_keep(&doc1));
+        assert!(!filter.should_keep(&doc2));
+
+        // Filter for non-Rust documents
+        let not_rust_filter = DocumentStreamFilter::not(DocumentStreamFilter::metadata_contains(
+            "tags".to_string(),
+            "rust".to_string(),
+        ));
+
+        assert!(!not_rust_filter.should_keep(&doc1));
+        assert!(not_rust_filter.should_keep(&doc2));
     }
 }

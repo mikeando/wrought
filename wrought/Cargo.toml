@@ -25,8 +25,10 @@ wasmtime = "24.0.0"
 wasmtime-wasi = "24.0.0"
 bytes = "1.7.1"
 tera = "1.20.0"
+regex = "1.11.1"
+tantivy = "0.22"
 
-
-# This could probably be a dev dependency
+[dev-dependencies]
+tempfile = "3.14"
 mockall = "0.13"
 

@@ -189,9 +189,9 @@ impl LuaUserData for AiMessage {
     }
 }
 
-fn lua_ai_message<'lua>(
+fn lua_ai_message(
     bridge: Arc<Mutex<dyn Bridge>>,
-    _lua: &'lua Lua,
+    _lua: &Lua,
     _params: (),
 ) -> anyhow::Result<AiMessage> {
     let internal = bridge.lock().unwrap().ai_message()?;
