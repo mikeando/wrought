@@ -1,6 +1,6 @@
 pub mod docstream;
 pub mod document;
-pub mod fulltextsearch;
+pub mod fulltextindex;
 pub mod kb_impl;
 pub mod knowledgebase;
 pub mod memorykb;

@@ -1,3 +1,4 @@
+use core::str;
 use std::{
     collections::HashMap,
     sync::{Arc, Mutex},
@@ -5,7 +6,6 @@ use std::{
 
 use crate::{binary16::ContentHash, content_store::ContentStore};
 
-use super::document::Document;
 use super::{
     docstream::{
         DocumentStream, DocumentStreamInfo, DocumentStreamIterator, DocumentStreamIteratorDelayed,
@@ -13,11 +13,14 @@ use super::{
     document::DocumentId,
     kb_impl::KnowledgeBaseImpl,
 };
+use super::{document::Document, fulltextindex::FullTextIndex};
 
 #[derive(Clone)]
 pub struct KnowledgeBase {
     pub kb: Arc<Mutex<dyn KnowledgeBaseImpl>>,
     pub content_store: Arc<Mutex<dyn ContentStore + Send + Sync>>,
+    // Or does this belong inside the kb itself?
+    pub full_text_index: Arc<Mutex<dyn FullTextIndex + Send + Sync>>,
 }
 
 impl KnowledgeBase {
@@ -27,12 +30,15 @@ impl KnowledgeBase {
         metadata: HashMap<String, String>,
     ) -> anyhow::Result<Document> {
         let hash = self.content_store.lock().unwrap().store(content)?;
-        let document = Document::new(
-            DocumentId { id: hash },
-            metadata,
-            self.content_store.clone(),
-        );
+        let doc_id = DocumentId { id: hash };
+        let document = Document::new(doc_id.clone(), metadata, self.content_store.clone());
+        let content = str::from_utf8(content)?;
+
         // Optionally index or persist metadata here
+        self.full_text_index
+            .lock()
+            .unwrap()
+            .index_document(&doc_id, content)?;
         Ok(document)
     }
 
@@ -83,7 +89,10 @@ pub mod test {
 
     use crate::{
         content_store::mocks::MockContentStore,
-        kb::{docstream::DocumentStreamFilter, mock::internal::MockKnowledgeBaseImpl},
+        kb::{
+            docstream::DocumentStreamFilter,
+            mock::internal::{MockFullTextIndex, MockKnowledgeBaseImpl},
+        },
     };
 
     use super::*;
@@ -102,6 +111,7 @@ pub mod test {
     pub fn basic_stream() {
         let cs = Arc::new(Mutex::new(MockContentStore::new()));
         let cs2 = cs.clone();
+        let full_text_index = Arc::new(Mutex::new(MockFullTextIndex::default()));
         let kb_impl = Arc::new(Mutex::new(MockKnowledgeBaseImpl::new()));
         kb_impl
             .lock()
@@ -118,6 +128,7 @@ pub mod test {
         let kb = KnowledgeBase {
             kb: kb_impl,
             content_store: cs2,
+            full_text_index,
         };
 
         let docs = kb.all_docs().query();
@@ -146,6 +157,7 @@ pub mod test {
     #[test]
     pub fn document_stream_filter() {
         let content_store = Arc::new(Mutex::new(MockContentStore::new()));
+        let full_text_index = Arc::new(Mutex::new(MockFullTextIndex::default()));
         let cs = content_store.clone();
         let kb_impl = Arc::new(Mutex::new(MockKnowledgeBaseImpl::new()));
         kb_impl
@@ -157,6 +169,7 @@ pub mod test {
         let kb = KnowledgeBase {
             kb: kb_impl,
             content_store,
+            full_text_index,
         };
 
         let stream = kb
@@ -194,6 +207,7 @@ pub mod test {
     pub fn sequence_streams() {
         let content_store = Arc::new(Mutex::new(MockContentStore::new()));
         let cs = content_store.clone();
+        let full_text_index = Arc::new(Mutex::new(MockFullTextIndex::default()));
         let kb_impl = Arc::new(Mutex::new(MockKnowledgeBaseImpl::new()));
         kb_impl
             .lock()
@@ -203,6 +217,7 @@ pub mod test {
         let kb = KnowledgeBase {
             kb: kb_impl,
             content_store,
+            full_text_index,
         };
 
         let stream1 = kb.all_docs();
