@@ -5,7 +5,7 @@ use std::{
 
 use crate::{binary16::ContentHash, content_store::ContentStore};
 
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
 pub struct DocumentId {
     // TODO: unpub this
     pub id: ContentHash,

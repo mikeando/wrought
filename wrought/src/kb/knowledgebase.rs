@@ -8,7 +8,8 @@ use crate::{binary16::ContentHash, content_store::ContentStore};
 
 use super::{
     docstream::{
-        DocumentStream, DocumentStreamInfo, DocumentStreamIterator, DocumentStreamIteratorDelayed,
+        DocumentStream, DocumentStreamFilter, DocumentStreamInfo, DocumentStreamIterator,
+        DocumentStreamIteratorDelayed,
     },
     document::DocumentId,
     kb_impl::KnowledgeBaseImpl,
@@ -66,6 +67,22 @@ impl KnowledgeBase {
                     })
                     .collect(),
             ),
+            DocumentStreamInfo::WithTextQuery(query, info) => {
+                // First resolve the query into a document set.
+                // then use that as a filter for the remaining iterator
+                // TODO: Do something sensible with limit.
+                let doc_ids = self
+                    .full_text_index
+                    .lock()
+                    .unwrap()
+                    .search(&query, 100)
+                    .unwrap();
+                let doc_ids: Vec<_> = doc_ids.into_iter().map(|(_, id)| id).collect();
+                DocumentStreamIterator::filter(
+                    DocumentStreamFilter::id_in_set(doc_ids),
+                    self.create_iter(info),
+                )
+            }
         }
     }
 
@@ -87,6 +104,8 @@ pub enum KnowledgeBaseError {
 #[cfg(test)]
 pub mod test {
 
+    use mockall::predicate;
+
     use crate::{
         content_store::mocks::MockContentStore,
         kb::{
@@ -98,13 +117,16 @@ pub mod test {
     use super::*;
 
     fn dummy_doc(content_store: Arc<Mutex<dyn ContentStore + Send + Sync>>) -> Document {
-        Document::new(
-            DocumentId {
+        doc(
+            &DocumentId {
                 id: ContentHash::zero(),
             },
-            HashMap::new(),
             content_store,
         )
+    }
+
+    fn doc(id: &DocumentId, content_store: Arc<Mutex<dyn ContentStore + Send + Sync>>) -> Document {
+        Document::new(id.clone(), HashMap::new(), content_store)
     }
 
     #[test]
@@ -226,6 +248,70 @@ pub mod test {
 
         let docs: Vec<Document> = combined.query();
         assert_eq!(docs.len(), 2);
+    }
+
+    #[test]
+    pub fn extract_by_full_text_search() {
+        // Here we have a kb containing 3 docs,(id1, id3, id4)
+        // and a full-text-index where 3 docs are associated with the query "tofu" (id1, id2, id3)
+        // If we search the kb for "tofu" we should just get (id1, id3)
+
+        let content_store = Arc::new(Mutex::new(MockContentStore::new()));
+        let cs = content_store.clone();
+        let full_text_index = Arc::new(Mutex::new(MockFullTextIndex::default()));
+
+        let id1 = DocumentId {
+            id: ContentHash::from_content(b"Some doc about tofu"),
+        };
+        let id2 = DocumentId {
+            id: ContentHash::from_content(b"Another doc about tofu"),
+        };
+        let id3 = DocumentId {
+            id: ContentHash::from_content(b"I love docs about tofu"),
+        };
+        let id4 = DocumentId {
+            id: ContentHash::from_content(b"A doc about beans"),
+        };
+
+        let docs_for_tofu = vec![
+            (1.0, (&id1).clone()),
+            (0.7, id2.clone()),
+            (0.5, id3.clone()),
+        ];
+        full_text_index
+            .lock()
+            .unwrap()
+            .expect_search()
+            .once()
+            .with(predicate::eq("tofu"), predicate::eq(100))
+            .returning(move |_, _| Ok(docs_for_tofu.clone()));
+
+        let all_docs = vec![
+            doc(&id1, cs.clone()),
+            doc(&id3, cs.clone()),
+            doc(&id4, cs.clone()),
+        ];
+        let kb_impl = Arc::new(Mutex::new(MockKnowledgeBaseImpl::new()));
+        kb_impl
+            .lock()
+            .unwrap()
+            .expect_all_docs()
+            .once()
+            .returning(move || all_docs.clone());
+
+        let kb = KnowledgeBase {
+            kb: kb_impl,
+            content_store,
+            full_text_index,
+        };
+
+        let docs = kb.all_docs().with_text_query("tofu").query();
+
+        assert_eq!(docs.len(), 2);
+        assert_eq!(
+            docs.into_iter().map(|d| d.id().clone()).collect::<Vec<_>>(),
+            vec![id1.clone(), id3.clone()]
+        );
     }
 
     #[test]

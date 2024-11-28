@@ -1,6 +1,12 @@
-use std::{collections::VecDeque, sync::Arc};
+use std::{
+    collections::{HashSet, VecDeque},
+    sync::Arc,
+};
 
-use super::{document::Document, knowledgebase::KnowledgeBase};
+use super::{
+    document::{Document, DocumentId},
+    knowledgebase::KnowledgeBase,
+};
 
 pub struct DocumentStream {
     pub kb: KnowledgeBase,
@@ -13,6 +19,7 @@ pub enum DocumentStreamInfo {
     EmptyStream,
     Filter(DocumentStreamFilter, Box<DocumentStreamInfo>),
     Sequence(Vec<DocumentStreamInfo>),
+    WithTextQuery(String, Box<DocumentStreamInfo>),
 }
 
 impl DocumentStream {
@@ -37,6 +44,10 @@ impl DocumentStream {
                     DocumentStreamInfo::Sequence(infos)
                 }
             }
+            DocumentStreamInfo::WithTextQuery(s, info) => DocumentStreamInfo::Filter(
+                f,
+                Box::new(DocumentStreamInfo::WithTextQuery(s.clone(), info.clone())),
+            ),
         };
         DocumentStream {
             kb: self.kb.clone(),
@@ -74,6 +85,17 @@ impl DocumentStream {
         }
     }
 
+    pub fn with_text_query(&self, query: &str) -> DocumentStream {
+        let info = self.info.clone();
+
+        let info = DocumentStreamInfo::WithTextQuery(query.to_string(), Box::new(info));
+
+        DocumentStream {
+            kb: self.kb.clone(),
+            info,
+        }
+    }
+
     pub fn query(&self) -> Vec<Document> {
         self.iter().collect()
     }
@@ -93,6 +115,7 @@ pub enum DocumentStreamFilter {
     MetadataEquals(String, String),
     MetadataContains(String, String),
     MetadataRegex(String, String),
+    IdInSet(HashSet<DocumentId>),
 }
 
 impl DocumentStreamFilter {
@@ -138,7 +161,13 @@ impl DocumentStreamFilter {
                     .and_then(|v| Regex::new(regex).ok().map(|r| r.is_match(v)))
                     .unwrap_or(false)
             }
+            DocumentStreamFilter::IdInSet(ids) => ids.contains(v.id()),
         }
+    }
+
+    // TODO: Use a more general type here?
+    pub(crate) fn id_in_set(doc_ids: Vec<DocumentId>) -> DocumentStreamFilter {
+        DocumentStreamFilter::IdInSet(doc_ids.into_iter().collect())
     }
 }
 
