@@ -20,18 +20,15 @@ pub enum DocumentStreamInfo {
     Filter(DocumentStreamFilter, Box<DocumentStreamInfo>),
     Sequence(Vec<DocumentStreamInfo>),
     WithTextQuery(String, Box<DocumentStreamInfo>),
+    WithVectorQuery(Vec<f32>, Box<DocumentStreamInfo>),
 }
 
 impl DocumentStream {
     pub fn filter(&self, f: DocumentStreamFilter) -> DocumentStream {
         let info = match &self.info {
-            DocumentStreamInfo::AllDocs => {
-                DocumentStreamInfo::Filter(f, Box::new(DocumentStreamInfo::AllDocs))
-            }
-            DocumentStreamInfo::EmptyStream => DocumentStreamInfo::EmptyStream,
-            DocumentStreamInfo::Filter(f2, info) => {
-                DocumentStreamInfo::Filter(DocumentStreamFilter::and(f2.clone(), f), info.clone())
-            }
+            DocumentStreamInfo::EmptyStream => Some(DocumentStreamInfo::EmptyStream),
+            DocumentStreamInfo::Filter(f2, info) => 
+                Some(DocumentStreamInfo::Filter(DocumentStreamFilter::and(f2.clone(), f.clone()), info.clone())),
             DocumentStreamInfo::Sequence(infos) => {
                 // f(seq(a,b,c)) = seq(f(a), f(b), f(c))
                 let infos: Vec<_> = infos
@@ -39,16 +36,21 @@ impl DocumentStream {
                     .map(|v| DocumentStreamInfo::Filter(f.clone(), Box::new(v.clone())))
                     .collect();
                 if infos.is_empty() {
-                    DocumentStreamInfo::EmptyStream
+                    Some(DocumentStreamInfo::EmptyStream)
                 } else {
-                    DocumentStreamInfo::Sequence(infos)
+                    Some(DocumentStreamInfo::Sequence(infos))
                 }
             }
-            DocumentStreamInfo::WithTextQuery(s, info) => DocumentStreamInfo::Filter(
-                f,
-                Box::new(DocumentStreamInfo::WithTextQuery(s.clone(), info.clone())),
-            ),
+            DocumentStreamInfo::AllDocs => None,
+            DocumentStreamInfo::WithTextQuery(_, _) => None,
+            DocumentStreamInfo::WithVectorQuery(_, _) => None
         };
+        let info = info.unwrap_or_else(||
+            DocumentStreamInfo::Filter(
+                f, 
+                Box::new(self.info.clone())
+            )
+        );
         DocumentStream {
             kb: self.kb.clone(),
             info,
@@ -87,8 +89,17 @@ impl DocumentStream {
 
     pub fn with_text_query(&self, query: &str) -> DocumentStream {
         let info = self.info.clone();
-
         let info = DocumentStreamInfo::WithTextQuery(query.to_string(), Box::new(info));
+
+        DocumentStream {
+            kb: self.kb.clone(),
+            info,
+        }
+    }
+
+    pub(crate) fn with_vector_query(&self, key: Vec<f32>) -> DocumentStream {
+        let info = self.info.clone();
+        let info = DocumentStreamInfo::WithVectorQuery(key, Box::new(info));
 
         DocumentStream {
             kb: self.kb.clone(),
@@ -104,6 +115,8 @@ impl DocumentStream {
         // TODO: Probably just move this into KnowledgeDb
         self.kb.create_iter(&self.info)
     }
+    
+
 }
 
 #[derive(Clone)]
