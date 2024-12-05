@@ -7,6 +7,7 @@ pub mod internal {
     use crate::kb::full_text_index::FullTextIndex;
     use crate::kb::kb_impl::KnowledgeBaseImpl;
     use crate::kb::knowledgebase::KnowledgeBaseError;
+    use crate::kb::metadata_store::MetadataStore;
     use crate::kb::vector_index;
     use crate::kb::vector_index::VectorIndex;
 
@@ -14,11 +15,11 @@ pub mod internal {
         pub KnowledgeBaseImpl {}
 
         impl KnowledgeBaseImpl for KnowledgeBaseImpl {
-            fn all_docs(&self) -> Vec<Document>;
+            fn all_docs(&self) -> Vec<DocumentId>;
 
-            fn add_document(&self, doc: Document) -> Result<(), KnowledgeBaseError>;
-            fn update_document(&self, doc: Document) -> Result<(), KnowledgeBaseError>;
-            fn delete_document(&self, doc_id: &DocumentId) -> Result<(), KnowledgeBaseError>;
+            fn add_document(&mut self, doc: crate::kb::document::DocumentContent) -> Result<DocumentId, KnowledgeBaseError>;
+            fn update_document(&mut self, doc: Document) -> Result<(), KnowledgeBaseError>;
+            fn delete_document(&mut self, doc_id: &DocumentId) -> Result<(), KnowledgeBaseError>;
             fn get_document(&self, doc_id: &DocumentId) -> Option<Document>;
         }
     }
@@ -41,6 +42,14 @@ pub mod internal {
             fn key_from_content(&self, content: &str) -> vector_index::Result<Vec<f32>>;
             fn search(&self, key: &[f32], limit: Option<usize>, min_similarity: Option<f32>) -> vector_index::Result<Vec<(f32, DocumentId)>>;
             fn put(&mut self, document_id: &DocumentId, key: Vec<f32>) -> vector_index::Result<()>;
+        }
+    }
+
+    mock! {
+        pub MetadataStore {}
+
+        impl MetadataStore for MetadataStore {
+            fn get_metadata(&self, v: &DocumentId, key: &str) -> Option<String>;
         }
     }
 }

@@ -1,21 +1,15 @@
 use core::str;
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     sync::{Arc, Mutex},
 };
 
 use crate::{binary16::ContentHash, content_store::ContentStore};
 
 use super::{
-    docstream::{
-        DocumentStream, DocumentStreamFilter, DocumentStreamInfo, DocumentStreamIterator,
-        DocumentStreamIteratorDelayed,
-    },
-    document::DocumentId,
-    kb_impl::KnowledgeBaseImpl,
-    vector_index::VectorIndex,
+    document::DocumentId, kb_impl::KnowledgeBaseImpl, metadata_store::MetadataStore, query::Query, vector_index::VectorIndex
 };
-use super::{document::Document, full_text_index::FullTextIndex};
+use super::full_text_index::FullTextIndex;
 
 #[derive(Clone)]
 pub struct KnowledgeBase {
@@ -24,17 +18,16 @@ pub struct KnowledgeBase {
     // Or does this belong inside the kb itself?
     pub full_text_index: Arc<Mutex<dyn FullTextIndex + Send + Sync>>,
     pub vector_index: Arc<Mutex<dyn VectorIndex + Send + Sync>>,
+    pub metadata_store: Arc<Mutex<dyn MetadataStore + Send + Sync>>,
 }
 
 impl KnowledgeBase {
     pub fn store_document(
         &mut self,
+        doc_id: DocumentId,
         content: &[u8],
         metadata: HashMap<String, String>,
-    ) -> anyhow::Result<Document> {
-        let hash = self.content_store.lock().unwrap().store(content)?;
-        let doc_id = DocumentId { id: hash };
-        let document = Document::new(doc_id.clone(), metadata, self.content_store.clone());
+    ) -> anyhow::Result<DocumentId> {
         let content = str::from_utf8(content)?;
 
         // Optionally index or persist metadata here
@@ -42,34 +35,31 @@ impl KnowledgeBase {
             .lock()
             .unwrap()
             .index_document(&doc_id, content)?;
-        Ok(document)
+        Ok(doc_id)
     }
 
     pub fn get_content(&self, hash: &ContentHash) -> anyhow::Result<Option<Vec<u8>>> {
         self.content_store.lock().unwrap().retrieve(hash.clone())
     }
-
-    pub fn create_iter(&self, info: &DocumentStreamInfo) -> DocumentStreamIterator {
-        match info {
-            DocumentStreamInfo::AllDocs => {
-                DocumentStreamIterator::list(self.kb.lock().unwrap().all_docs())
+    
+    fn query(&self, query: Query) -> Vec<DocumentId> {
+        match query {
+            Query::AllDocs => {
+                self.kb.lock().unwrap().all_docs()
             }
-            DocumentStreamInfo::EmptyStream => DocumentStreamIterator::empty(),
-            DocumentStreamInfo::Filter(f, info) => {
-                DocumentStreamIterator::filter(f.clone(), self.create_iter(info))
+            Query::EmptyStream => vec![],
+            Query::Filter(f, info) => {
+                let docs = self.query(*info);
+                docs.into_iter().filter(|d| f.should_keep(self, d)).collect()
             }
-            DocumentStreamInfo::Sequence(infos) => DocumentStreamIterator::sequence(
-                infos
-                    .iter()
-                    .map(|info| {
-                        DocumentStreamIterator::Delayed(DocumentStreamIteratorDelayed::Unevaluated(
-                            self.clone(),
-                            info.clone(),
-                        ))
-                    })
-                    .collect(),
-            ),
-            DocumentStreamInfo::WithTextQuery(query, info) => {
+            Query::Sequence(queries) => {
+                let mut docs = vec![];
+                for query in queries {
+                    docs.append( &mut self.query(query));
+                }
+                docs
+            }
+            Query::WithTextQuery(query, info) => {
                 // First resolve the query into a document set.
                 // then use that as a filter for the remaining iterator
                 // TODO: Do something sensible with limit.
@@ -79,13 +69,11 @@ impl KnowledgeBase {
                     .unwrap()
                     .search(&query, 100)
                     .unwrap();
-                let doc_ids: Vec<_> = doc_ids.into_iter().map(|(_, id)| id).collect();
-                DocumentStreamIterator::filter(
-                    DocumentStreamFilter::id_in_set(doc_ids),
-                    self.create_iter(info),
-                )
+                let doc_ids: HashSet<_> = doc_ids.into_iter().map(|(_, id)| id).collect();
+                let other_doc_ids = self.query(*info);
+                other_doc_ids.into_iter().filter( |d: &DocumentId| doc_ids.contains(d) ).collect()
             }
-            DocumentStreamInfo::WithVectorQuery(key, info) => {
+            Query::WithVectorQuery(key, info) => {
                 // First resolve the query into a document set.
                 // then use that as a filter for the remaining iterator
                 // TODO: Do something sensible with limit.
@@ -95,21 +83,15 @@ impl KnowledgeBase {
                     .unwrap()
                     .search(&key, Some(100), Some(0.1))
                     .unwrap();
-                let doc_ids: Vec<_> = doc_ids.into_iter().map(|(_, id)| id).collect();
-                DocumentStreamIterator::filter(
-                    DocumentStreamFilter::id_in_set(doc_ids),
-                    self.create_iter(info),
-                )
-            }
-            
+                let doc_ids: HashSet<_> = doc_ids.into_iter().map(|(_, id)| id).collect();
+                let other_doc_ids = self.query(*info);
+                other_doc_ids.into_iter().filter( |d: &DocumentId| doc_ids.contains(d) ).collect()
+            }    
         }
     }
-
-    pub fn all_docs(&self) -> DocumentStream {
-        DocumentStream {
-            kb: self.clone(),
-            info: DocumentStreamInfo::AllDocs,
-        }
+    
+    pub(crate) fn get_metadata(&self, v: &DocumentId, key: &str) -> Option<String> {
+        self.metadata_store.lock().unwrap().get_metadata(v, key)
     }
 }
 
@@ -128,167 +110,89 @@ pub mod test {
     use crate::{
         content_store::mocks::MockContentStore,
         kb::{
-            docstream::DocumentStreamFilter,
-            mock::internal::{MockFullTextIndex, MockKnowledgeBaseImpl, MockVectorIndex},
-            vector_index,
+            filter::Filter, mock::internal::{MockFullTextIndex, MockKnowledgeBaseImpl, MockMetadataStore, MockVectorIndex}
         },
     };
 
     use super::*;
 
-    fn dummy_doc(content_store: Arc<Mutex<dyn ContentStore + Send + Sync>>) -> Document {
-        doc(
-            &DocumentId {
-                id: ContentHash::zero(),
-            },
-            content_store,
-        )
-    }
-
-    fn doc(id: &DocumentId, content_store: Arc<Mutex<dyn ContentStore + Send + Sync>>) -> Document {
-        Document::new(id.clone(), HashMap::new(), content_store)
-    }
-
-    fn doc_id(content: &str) -> DocumentId {
-        DocumentId {
-            id: ContentHash::from_content(content.as_bytes()),
-        }
-    }
-
     #[test]
     pub fn basic_stream() {
-        let cs = Arc::new(Mutex::new(MockContentStore::new()));
-        let cs2 = cs.clone();
-        let full_text_index = Arc::new(Mutex::new(MockFullTextIndex::default()));
-        let kb_impl = Arc::new(Mutex::new(MockKnowledgeBaseImpl::new()));
-        let vector_index = Arc::new(Mutex::new(MockVectorIndex::default()));
-        kb_impl
+
+        let (kb, components) = create_test_kb();
+
+        components.kb_impl
             .lock()
             .unwrap()
             .expect_all_docs()
             .returning(move || {
                 vec![
-                    dummy_doc(cs.clone()),
-                    dummy_doc(cs.clone()),
-                    dummy_doc(cs.clone()),
-                    dummy_doc(cs.clone()),
+                    DocumentId::from_u64s(100,200),
+                    DocumentId::from_u64s(100,201),
+                    DocumentId::from_u64s(100,202),
+                    DocumentId::from_u64s(100,203),
                 ]
             });
-        let kb = KnowledgeBase {
-            kb: kb_impl,
-            content_store: cs2,
-            full_text_index,
-            vector_index,
-        };
 
-        let docs = kb.all_docs().query();
+        let query = Query::AllDocs;
+        let docs = kb.query(query);
 
         assert_eq!(docs.len(), 4);
     }
 
     #[test]
-    pub fn document_retrieves_content() {
-        let mut cs = MockContentStore::new();
-        let content = "Hello, world!";
-        let docid = DocumentId {
-            id: ContentHash::from_content("some content".as_bytes()),
-        };
-
-        cs.expect_retrieve()
-            .with(mockall::predicate::eq(docid.id.clone()))
-            .returning(move |_| Ok(Some(content.as_bytes().to_vec())));
-
-        let document = Document::new(docid.clone(), HashMap::new(), Arc::new(Mutex::new(cs)));
-
-        let retrieved_content = document.content().unwrap();
-        assert_eq!(retrieved_content, Some(content.as_bytes().to_vec()));
-    }
-
-    #[test]
     pub fn document_stream_filter() {
-        let content_store = Arc::new(Mutex::new(MockContentStore::new()));
-        let full_text_index = Arc::new(Mutex::new(MockFullTextIndex::default()));
-        let cs = content_store.clone();
-        let kb_impl = Arc::new(Mutex::new(MockKnowledgeBaseImpl::new()));
-        let vector_index = Arc::new(Mutex::new(MockVectorIndex::default()));
+        let (kb, components) = create_test_kb();
 
-        kb_impl
+        components.kb_impl
             .lock()
             .unwrap()
             .expect_all_docs()
-            .returning(move || vec![dummy_doc(cs.clone()), dummy_doc(cs.clone())]);
+            .returning(move || vec![
+                DocumentId::from_u64s(100,200),
+                DocumentId::from_u64s(100,201),
+                ]);
 
-        let kb = KnowledgeBase {
-            kb: kb_impl,
-            content_store,
-            full_text_index,
-            vector_index,
-        };
 
-        let stream = kb
-            .all_docs()
-            .filter(DocumentStreamFilter::FilterFn(Arc::new(|_| false)));
-        let docs: Vec<Document> = stream.query();
+        let query = Query::AllDocs
+            .filter(Filter::FilterFn(Arc::new(|_| false)));
+
+        let docs: Vec<DocumentId> = kb.query(query);
 
         assert!(docs.is_empty());
 
-        let stream = kb
-            .all_docs()
-            .filter(DocumentStreamFilter::FilterFn(Arc::new(|_| true)));
-        let docs: Vec<Document> = stream.query();
+        let query = Query::AllDocs
+            .filter(Filter::FilterFn(Arc::new(|_| true)));
+
+        let docs: Vec<DocumentId> = kb.query(query);
         assert_eq!(docs.len(), 2);
     }
 
-    #[test]
-    pub fn missing_content_in_store() {
-        let mut cs = MockContentStore::new();
-        let docid = DocumentId {
-            id: ContentHash::from_content("some content".as_bytes()),
-        };
-
-        cs.expect_retrieve()
-            .with(mockall::predicate::eq(docid.id.clone()))
-            .returning(|_| Ok(None));
-
-        let document = Document::new(docid.clone(), HashMap::new(), Arc::new(Mutex::new(cs)));
-
-        let retrieved_content = document.content().unwrap();
-        assert!(retrieved_content.is_none());
-    }
 
     #[test]
     pub fn sequence_streams() {
-        let content_store = Arc::new(Mutex::new(MockContentStore::new()));
-        let cs = content_store.clone();
-        let full_text_index = Arc::new(Mutex::new(MockFullTextIndex::default()));
-        let kb_impl = Arc::new(Mutex::new(MockKnowledgeBaseImpl::new()));
-        let vector_index = Arc::new(Mutex::new(MockVectorIndex::default()));
+        let (kb, components) = create_test_kb();
 
-        kb_impl
+        components.kb_impl
             .lock()
             .unwrap()
             .expect_all_docs()
-            .returning(move || vec![dummy_doc(cs.clone())]);
-        let kb = KnowledgeBase {
-            kb: kb_impl,
-            content_store,
-            full_text_index,
-            vector_index,
-        };
+            .returning(move || vec![DocumentId::from_u64s(234, 567)]);
 
-        let stream1 = kb.all_docs();
-        let stream2 = kb.all_docs();
-        let combined = DocumentStream::sequence(kb, &[stream1, stream2]);
+        let stream1 = Query::AllDocs;
+        let stream2 = Query::AllDocs;
+        let combined = Query::sequence(&[stream1, stream2]);
 
-        let docs: Vec<Document> = combined.query();
+        let docs: Vec<DocumentId> = kb.query(combined);
         assert_eq!(docs.len(), 2);
     }
 
-    struct TestComponents {
-        content_store: Arc<Mutex<MockContentStore>>,
-        full_text_index: Arc<Mutex<MockFullTextIndex>>,
-        vector_index: Arc<Mutex<MockVectorIndex>>,
-        kb_impl: Arc<Mutex<MockKnowledgeBaseImpl>>,
+    pub struct TestComponents {
+        pub content_store: Arc<Mutex<MockContentStore>>,
+        pub full_text_index: Arc<Mutex<MockFullTextIndex>>,
+        pub vector_index: Arc<Mutex<MockVectorIndex>>,
+        pub kb_impl: Arc<Mutex<MockKnowledgeBaseImpl>>,
+        pub metadata_store: Arc<Mutex<MockMetadataStore>>,
     }
 
     impl TestComponents {
@@ -297,12 +201,14 @@ pub mod test {
             let full_text_index = Arc::new(Mutex::new(MockFullTextIndex::default()));
             let vector_index = Arc::new(Mutex::new(MockVectorIndex::default()));
             let kb_impl = Arc::new(Mutex::new(MockKnowledgeBaseImpl::new()));
+            let metadata_store = Arc::new(Mutex::new(MockMetadataStore::new()));
 
             TestComponents {
                 content_store,
                 full_text_index,
                 vector_index,
                 kb_impl,
+                metadata_store,
             }
         }
 
@@ -312,10 +218,11 @@ pub mod test {
                 content_store: self.content_store.clone(),
                 full_text_index: self.full_text_index.clone(),
                 vector_index: self.vector_index.clone(),
+                metadata_store: self.metadata_store.clone(),
             }
         }
 
-        fn set_text_search_results(&mut self, key: &str, score_and_ids: Vec<(f32, DocumentId)>) {
+        pub fn set_text_search_results(&mut self, key: &str, score_and_ids: Vec<(f32, DocumentId)>) {
             self.full_text_index
                 .lock()
                 .unwrap()
@@ -325,7 +232,7 @@ pub mod test {
                 .returning(move |_, _| Ok(score_and_ids.clone()));
         }
 
-        fn set_vector_search_results(&mut self, key: Vec<f32>, score_and_ids: Vec<(f32, DocumentId)>) {
+        pub fn set_vector_search_results(&mut self, key: Vec<f32>, score_and_ids: Vec<(f32, DocumentId)>) {
             self.vector_index
                 .lock()
                 .unwrap()
@@ -335,11 +242,8 @@ pub mod test {
                 .returning(move |_,_,_| Ok(score_and_ids.clone()));
         }
 
-        fn set_all_doc_ids(&mut self, all_doc_ids: &[DocumentId]) {
-            let documents: Vec<_> = all_doc_ids
-                .iter()
-                .map(|d| doc(d, self.content_store.clone()))
-                .collect();
+        pub fn set_all_doc_ids(&mut self, all_doc_ids: &[DocumentId]) {
+            let documents: Vec<DocumentId> = all_doc_ids.to_vec();
             self.kb_impl
                 .lock()
                 .unwrap()
@@ -347,9 +251,18 @@ pub mod test {
                 .once()
                 .returning(move || documents.clone());
         }
+
+        pub fn set_document_metadata(&mut self, doc_id: &DocumentId, kvs: &[(&str, &str)]) {
+            for (k,v) in kvs {
+                let v = v.to_string();
+                self.metadata_store.lock().unwrap().expect_get_metadata()
+                    .with(predicate::eq(doc_id.clone()), predicate::eq(k.to_string()))
+                .returning(move |_,_| Some(v.clone()));
+            }
+        }
     }
 
-    fn create_test_kb() -> (KnowledgeBase, TestComponents) {
+    pub fn create_test_kb() -> (KnowledgeBase, TestComponents) {
         let components = TestComponents::new();
         (components.build_kb(), components)
     }
@@ -362,10 +275,10 @@ pub mod test {
 
         let (kb, mut components) = create_test_kb();
 
-        let id1 = doc_id("Some doc about tofu");
-        let id2 = doc_id("Another doc about tofu");
-        let id3 = doc_id("I love docs about tofu");
-        let id4 = doc_id("A doc about beans");
+        let id1 = DocumentId::from_u64s(123, 1);
+        let id2 = DocumentId::from_u64s(123, 2);
+        let id3 =  DocumentId::from_u64s(123, 3);
+        let id4 =  DocumentId::from_u64s(123, 4);
 
         let docs_for_tofu = vec![
             (1.0, (&id1).clone()),
@@ -376,11 +289,11 @@ pub mod test {
         components.set_text_search_results("tofu", docs_for_tofu);
         components.set_all_doc_ids(&[id1.clone(), id3.clone(), id4.clone()]);
 
-        let docs = kb.all_docs().with_text_query("tofu").query();
+        let docs = kb.query(Query::AllDocs.with_text_query("tofu"));
 
         assert_eq!(docs.len(), 2);
         assert_eq!(
-            docs.into_iter().map(|d| d.id().clone()).collect::<Vec<_>>(),
+            docs,
             vec![id1.clone(), id3.clone()]
         );
     }
@@ -393,10 +306,10 @@ pub mod test {
 
         let (kb, mut components) = create_test_kb();
 
-        let id1 = doc_id("Some doc about tofu");
-        let id2 = doc_id("Another doc about tofu");
-        let id3 = doc_id("I love docs about tofu");
-        let id4 = doc_id("A doc about beans");
+        let id1 = DocumentId::from_u64s(123, 1);
+        let id2 = DocumentId::from_u64s(123, 2);
+        let id3 =  DocumentId::from_u64s(123, 3);
+        let id4 =  DocumentId::from_u64s(123, 4);
 
         let key = vec![1.0, 2.0];
         let docs_for_key = vec![
@@ -408,48 +321,20 @@ pub mod test {
         components.set_vector_search_results(key.clone(), docs_for_key);
         components.set_all_doc_ids(&[id1.clone(), id3.clone(), id4.clone()]);
 
-        let docs = kb.all_docs().with_vector_query(key.clone()).query();
+        let docs = kb.query(Query::AllDocs.with_vector_query(key.clone()));
 
         assert_eq!(docs.len(), 2);
         assert_eq!(
-            docs.into_iter().map(|d| d.id().clone()).collect::<Vec<_>>(),
+            docs,
             vec![id1.clone(), id3.clone()]
         );
     }
 
-    #[test]
-    pub fn document_metadata() {
-        let cs = Arc::new(Mutex::new(MockContentStore::new()));
-        let mut metadata = HashMap::new();
-        metadata.insert("author".to_string(), "Alice".to_string());
-
-        let docid = DocumentId {
-            id: ContentHash::from_content("some content".as_bytes()),
-        };
-        let mut document = Document::new(docid, metadata.clone(), cs);
-
-        assert_eq!(document.get_metadata("author"), Some(&"Alice".to_string()));
-
-        document.set_metadata("author".to_string(), "Bob".to_string());
-        assert_eq!(document.get_metadata("author"), Some(&"Bob".to_string()));
-    }
 
     #[test]
-    pub fn content_store_error_propagation() {
-        let cs = Arc::new(Mutex::new(MockContentStore::new()));
-        let docid = DocumentId {
-            id: ContentHash::from_content("some hash".as_bytes()),
-        };
-
-        cs.lock()
-            .unwrap()
-            .expect_retrieve()
-            .with(mockall::predicate::eq(docid.id.clone()))
-            .returning(|_| Err(anyhow::anyhow!("Store error")));
-
-        let document = Document::new(docid.clone(), HashMap::new(), cs);
-
-        let err = document.content().unwrap_err();
-        assert_eq!(err.to_string(), "Store error");
+    pub fn can_add_and_retrieve_a_document() {
+        todo!();
     }
+
+
 }

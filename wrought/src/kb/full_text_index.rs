@@ -11,8 +11,6 @@ use tantivy::{
 };
 use tantivy::{IndexSettings, TantivyDocument};
 
-use crate::binary16::ContentHash;
-
 use super::document::DocumentId;
 
 pub trait FullTextIndex {
@@ -80,7 +78,7 @@ impl FullTextIndex for TantivyFullTextIndex {
 
         // Prepare document for indexing
         let mut doc = tantivy::TantivyDocument::new();
-        doc.add_text(self.id_field, document_id.id.to_string());
+        doc.add_text(self.id_field, document_id.to_string());
         doc.add_text(self.content_field, content);
 
         // Commit the document
@@ -112,9 +110,7 @@ impl FullTextIndex for TantivyFullTextIndex {
             let doc_id = retrieved_doc
                 .get_first(self.id_field)
                 .and_then(|v| v.as_str())
-                .map(|s| DocumentId {
-                    id: ContentHash::from_string(s).unwrap(),
-                })
+                .map(|s| DocumentId::from_string(s).unwrap())
                 .unwrap();
 
             results.push((score, doc_id));
@@ -127,7 +123,6 @@ impl FullTextIndex for TantivyFullTextIndex {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::binary16::ContentHash;
 
     #[test]
     fn test_full_text_indexing_and_search() -> Result<()> {
@@ -136,9 +131,7 @@ mod tests {
 
         // Create content store
         let doc_content = "This is a bunch of random content";
-        let doc_id = DocumentId {
-            id: ContentHash::from_content(doc_content.as_bytes()),
-        };
+        let doc_id = DocumentId::from_u64s(10,20);
 
         // Index the document
         full_text_index.index_document(&doc_id, doc_content)?;

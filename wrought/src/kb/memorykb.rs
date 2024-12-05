@@ -1,45 +1,50 @@
 use std::sync::Mutex;
 
 use super::{
-    document::{Document, DocumentId},
+    document::{Document, DocumentContent, DocumentId},
     kb_impl::KnowledgeBaseImpl,
     knowledgebase::KnowledgeBaseError,
 };
 
 pub struct InMemoryKnowledgeBase {
+    last_id_seed: usize,
     documents: Mutex<Vec<Document>>,
 }
 
 impl InMemoryKnowledgeBase {
     pub fn new() -> Self {
         InMemoryKnowledgeBase {
+            last_id_seed: 0,
             documents: Mutex::new(vec![]),
         }
     }
 }
 
 impl KnowledgeBaseImpl for InMemoryKnowledgeBase {
-    fn all_docs(&self) -> Vec<Document> {
-        self.documents.lock().unwrap().clone()
+    fn all_docs(&self) -> Vec<DocumentId> {
+        self.documents.lock().unwrap().iter().map(|doc| doc.id.clone()).collect()
     }
 
-    fn add_document(&self, doc: Document) -> Result<(), KnowledgeBaseError> {
+    fn add_document(&mut self, content: DocumentContent) -> Result<DocumentId, KnowledgeBaseError> {
+        use sha2::Digest;
+
+        self.last_id_seed +=1;
+        let mut seed_content = b"crazy_seed".to_vec();
+        seed_content.append(&mut self.last_id_seed.to_le_bytes().to_vec());
+        let digest = sha2::Sha256::digest(seed_content);
+        let doc_id = DocumentId::from_raw(digest.as_slice()[0..16].try_into().unwrap());
+
         let mut docs = self.documents.lock().unwrap();
 
-        // Check if a document with the same ID already exists
-        if docs.iter().any(|existing| existing.id() == doc.id()) {
-            return Err(KnowledgeBaseError::DocumentAlreadyExists);
-        }
-
-        docs.push(doc);
-        Ok(())
+        docs.push(Document{ id: doc_id.clone() , content});
+        Ok(doc_id)
     }
 
-    fn update_document(&self, doc: Document) -> Result<(), KnowledgeBaseError> {
+    fn update_document(&mut self, doc: Document) -> Result<(), KnowledgeBaseError> {
         let mut docs = self.documents.lock().unwrap();
 
         // Find and replace the document with matching ID
-        if let Some(index) = docs.iter().position(|existing| existing.id() == doc.id()) {
+        if let Some(index) = docs.iter().position(|existing| existing.id == doc.id) {
             docs[index] = doc;
             Ok(())
         } else {
@@ -47,11 +52,11 @@ impl KnowledgeBaseImpl for InMemoryKnowledgeBase {
         }
     }
 
-    fn delete_document(&self, doc_id: &DocumentId) -> Result<(), KnowledgeBaseError> {
+    fn delete_document(&mut self, doc_id: &DocumentId) -> Result<(), KnowledgeBaseError> {
         let mut docs = self.documents.lock().unwrap();
 
         // Find and remove the document with matching ID
-        if let Some(index) = docs.iter().position(|doc| doc.id() == doc_id) {
+        if let Some(index) = docs.iter().position(|doc| doc.id == *doc_id) {
             docs.remove(index);
             Ok(())
         } else {
@@ -60,65 +65,60 @@ impl KnowledgeBaseImpl for InMemoryKnowledgeBase {
     }
 
     fn get_document(&self, doc_id: &DocumentId) -> Option<Document> {
-        let docs = self.documents.lock().unwrap();
-        docs.iter().find(|doc| doc.id() == doc_id).cloned()
+        self.documents.lock().unwrap().iter().find(|e| e.id == *doc_id).cloned()
     }
+    
+    // fn get_document(&self, doc_id: &DocumentId) -> Option<Document> {
+    //     let docs = self.documents.lock().unwrap();
+    //     docs.iter().find(|doc| doc.id() == doc_id).cloned()
+    // }
+    
 }
 
 // Tests for the InMemoryKnowledgeBase
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{binary16::ContentHash, content_store::mocks::MockContentStore};
-    use std::{collections::HashMap, sync::Arc};
+    use std::collections::HashMap;
 
     fn create_test_document(
+        doc_id: DocumentId, 
         content: &str,
-        content_store: Arc<Mutex<MockContentStore>>,
     ) -> Document {
-        let hash = ContentHash::from_content(content.as_bytes());
-        let doc_id = DocumentId { id: hash };
-
         let mut metadata = HashMap::new();
         metadata.insert("test_key".to_string(), "test_value".to_string());
 
-        Document::new(doc_id, metadata, content_store)
+        Document{ id: doc_id, content: DocumentContent { content: content.to_string()} }
     }
 
     #[test]
     fn test_add_and_get_document() {
-        let content_store = Arc::new(Mutex::new(MockContentStore::new()));
-        let kb = InMemoryKnowledgeBase::new();
+        let mut kb = InMemoryKnowledgeBase::new();
 
-        let doc = create_test_document("Hello, world!", content_store.clone());
-        let doc_id = doc.id().clone();
+        let doc = create_test_document(DocumentId::from_u64s(100, 200), "Hello, world!");
+        let doc_id = doc.id.clone();
 
         // Add document
-        kb.add_document(doc.clone())
+        kb.add_document(doc.content)
             .expect("Should add document successfully");
 
         // Retrieve document
         let retrieved_doc = kb.get_document(&doc_id).expect("Should retrieve document");
-        assert_eq!(retrieved_doc.id(), &doc_id);
-        assert_eq!(
-            retrieved_doc.get_metadata("test_key"),
-            Some(&"test_value".to_string())
-        );
+        assert_eq!(retrieved_doc.id, doc_id);
     }
 
     #[test]
     fn test_duplicate_document_add() {
-        let content_store = Arc::new(Mutex::new(MockContentStore::new()));
-        let kb = InMemoryKnowledgeBase::new();
+        let mut kb = InMemoryKnowledgeBase::new();
 
-        let doc = create_test_document("Hello, world!", content_store.clone());
+        let doc = create_test_document(DocumentId::from_u64s(100, 200), "Hello, world!");
 
         // First add should succeed
-        kb.add_document(doc.clone())
+        kb.add_document(doc.content.clone())
             .expect("First add should succeed");
 
         // Second add with same ID should fail
-        let result = kb.add_document(doc.clone());
+        let result = kb.add_document(doc.content);
         assert!(matches!(
             result,
             Err(KnowledgeBaseError::DocumentAlreadyExists)
@@ -127,40 +127,18 @@ mod tests {
 
     #[test]
     fn test_update_document() {
-        let content_store = Arc::new(Mutex::new(MockContentStore::new()));
-        let kb = InMemoryKnowledgeBase::new();
-
-        let mut doc = create_test_document("Hello, world!", content_store.clone());
-        let doc_id = doc.id().clone();
-
-        // Add initial document
-        kb.add_document(doc.clone()).expect("Should add document");
-
-        // Update metadata
-        doc.set_metadata("updated_key".to_string(), "updated_value".to_string());
-        kb.update_document(doc.clone())
-            .expect("Should update document");
-
-        // Retrieve and verify
-        let updated_doc = kb
-            .get_document(&doc_id)
-            .expect("Should retrieve updated document");
-        assert_eq!(
-            updated_doc.get_metadata("updated_key"),
-            Some(&"updated_value".to_string())
-        );
+        todo!();
     }
 
     #[test]
     fn test_delete_document() {
-        let content_store = Arc::new(Mutex::new(MockContentStore::new()));
-        let kb = InMemoryKnowledgeBase::new();
+        let mut kb = InMemoryKnowledgeBase::new();
 
-        let doc = create_test_document("Hello, world!", content_store.clone());
-        let doc_id = doc.id().clone();
+        let doc = create_test_document(DocumentId::from_u64s(100, 200), "Hello, world!");
+        let doc_id = doc.id.clone();
 
         // Add document
-        kb.add_document(doc).expect("Should add document");
+        kb.add_document(doc.content).expect("Should add document");
 
         // Delete document
         kb.delete_document(&doc_id).expect("Should delete document");
@@ -171,11 +149,9 @@ mod tests {
 
     #[test]
     fn test_delete_nonexistent_document() {
-        let kb = InMemoryKnowledgeBase::new();
+        let mut kb = InMemoryKnowledgeBase::new();
 
-        let doc_id = DocumentId {
-            id: ContentHash::from_content(b"test"),
-        };
+        let doc_id = DocumentId::from_u64s(100,200);
 
         // Delete should fail
         let result = kb.delete_document(&doc_id);
@@ -184,10 +160,9 @@ mod tests {
 
     #[test]
     fn test_update_nonexistent_document() {
-        let content_store = Arc::new(Mutex::new(MockContentStore::new()));
-        let kb = InMemoryKnowledgeBase::new();
+        let mut kb = InMemoryKnowledgeBase::new();
 
-        let doc = create_test_document("Hello, world!", content_store.clone());
+        let doc = create_test_document(DocumentId::from_u64s(100, 200), "Hello, world!");
 
         // Update should fail
         let result = kb.update_document(doc);

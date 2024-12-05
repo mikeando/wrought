@@ -81,27 +81,64 @@ impl Debug for Binary16 {
     }
 }
 
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
-pub struct ContentHash(Binary16);
+
+macro_rules! build_id_type {
+    ($name: ident) => {
+        #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
+        pub struct $name(Binary16);
+
+        impl $name {
+            pub fn from_string(s: &str) -> anyhow::Result<$name> {
+                Binary16::from_string(s).map($name)
+            }
+        
+            pub fn from_raw(id: [u8; 16]) -> $name {
+                $name(Binary16::from_raw(id))
+            }
+        
+            pub fn is_zero(&self) -> bool {
+                self.0.is_zero()
+            }
+        
+            pub fn zero() -> $name {
+                $name(Binary16::zero())
+            }
+
+            pub fn from_u64s(low: u64, high: u64) -> $name {
+                $name(Binary16::from_u64s(low,high))
+            }
+        }
+
+        impl Display for $name {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                std::fmt::Display::fmt(&self.0, f)
+            }
+        }
+        
+        impl Serialize for $name {
+            fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+            where
+                S: serde::Serializer,
+            {
+                self.0.serialize(serializer)
+            }
+        }
+        
+        impl<'de> Deserialize<'de> for $name {
+            fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+            where
+                D: serde::Deserializer<'de>,
+            {
+                Binary16::deserialize(deserializer).map($name)
+            }
+        }
+    };
+}
+
+build_id_type!(ContentHash);
 
 impl ContentHash {
-    pub fn from_string(s: &str) -> anyhow::Result<ContentHash> {
-        Binary16::from_string(s).map(ContentHash)
-    }
-
-    pub fn from_raw(id: [u8; 16]) -> ContentHash {
-        ContentHash(Binary16::from_raw(id))
-    }
-
-    pub fn is_zero(&self) -> bool {
-        self.0.is_zero()
-    }
-
-    pub fn zero() -> ContentHash {
-        ContentHash(Binary16::zero())
-    }
-
-    /// Get the ContentHash for the given input
+    /// Get the $name for the given input
     pub fn from_content(content: &[u8]) -> ContentHash {
         use sha2::Digest;
         let digest = Sha256::digest(content);
@@ -115,26 +152,7 @@ impl ContentHash {
     }
 }
 
-impl Display for ContentHash {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        std::fmt::Display::fmt(&self.0, f)
-    }
-}
+build_id_type!(DocumentId);
 
-impl Serialize for ContentHash {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        self.0.serialize(serializer)
-    }
-}
 
-impl<'de> Deserialize<'de> for ContentHash {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        Binary16::deserialize(deserializer).map(ContentHash)
-    }
-}
+
