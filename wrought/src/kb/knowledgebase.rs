@@ -6,10 +6,11 @@ use std::{
 
 use crate::{binary16::ContentHash, content_store::ContentStore};
 
-use super::{
-    document::DocumentId, kb_impl::KnowledgeBaseImpl, metadata_store::MetadataStore, query::Query, vector_index::VectorIndex
-};
 use super::full_text_index::FullTextIndex;
+use super::{
+    document::DocumentId, kb_impl::KnowledgeBaseImpl, metadata_store::MetadataStore, query::Query,
+    vector_index::VectorIndex,
+};
 
 #[derive(Clone)]
 pub struct KnowledgeBase {
@@ -41,21 +42,21 @@ impl KnowledgeBase {
     pub fn get_content(&self, hash: &ContentHash) -> anyhow::Result<Option<Vec<u8>>> {
         self.content_store.lock().unwrap().retrieve(hash.clone())
     }
-    
+
     fn query(&self, query: Query) -> Vec<DocumentId> {
         match query {
-            Query::AllDocs => {
-                self.kb.lock().unwrap().all_docs()
-            }
+            Query::AllDocs => self.kb.lock().unwrap().all_docs(),
             Query::EmptyStream => vec![],
             Query::Filter(f, info) => {
                 let docs = self.query(*info);
-                docs.into_iter().filter(|d| f.should_keep(self, d)).collect()
+                docs.into_iter()
+                    .filter(|d| f.should_keep(self, d))
+                    .collect()
             }
             Query::Sequence(queries) => {
                 let mut docs = vec![];
                 for query in queries {
-                    docs.append( &mut self.query(query));
+                    docs.append(&mut self.query(query));
                 }
                 docs
             }
@@ -71,7 +72,10 @@ impl KnowledgeBase {
                     .unwrap();
                 let doc_ids: HashSet<_> = doc_ids.into_iter().map(|(_, id)| id).collect();
                 let other_doc_ids = self.query(*info);
-                other_doc_ids.into_iter().filter( |d: &DocumentId| doc_ids.contains(d) ).collect()
+                other_doc_ids
+                    .into_iter()
+                    .filter(|d: &DocumentId| doc_ids.contains(d))
+                    .collect()
             }
             Query::WithVectorQuery(key, info) => {
                 // First resolve the query into a document set.
@@ -85,11 +89,14 @@ impl KnowledgeBase {
                     .unwrap();
                 let doc_ids: HashSet<_> = doc_ids.into_iter().map(|(_, id)| id).collect();
                 let other_doc_ids = self.query(*info);
-                other_doc_ids.into_iter().filter( |d: &DocumentId| doc_ids.contains(d) ).collect()
-            }    
+                other_doc_ids
+                    .into_iter()
+                    .filter(|d: &DocumentId| doc_ids.contains(d))
+                    .collect()
+            }
         }
     }
-    
+
     pub(crate) fn get_metadata(&self, v: &DocumentId, key: &str) -> Option<String> {
         self.metadata_store.lock().unwrap().get_metadata(v, key)
     }
@@ -110,7 +117,10 @@ pub mod test {
     use crate::{
         content_store::mocks::MockContentStore,
         kb::{
-            filter::Filter, mock::internal::{MockFullTextIndex, MockKnowledgeBaseImpl, MockMetadataStore, MockVectorIndex}
+            filter::Filter,
+            mock::internal::{
+                MockFullTextIndex, MockKnowledgeBaseImpl, MockMetadataStore, MockVectorIndex,
+            },
         },
     };
 
@@ -118,19 +128,19 @@ pub mod test {
 
     #[test]
     pub fn basic_stream() {
-
         let (kb, components) = create_test_kb();
 
-        components.kb_impl
+        components
+            .kb_impl
             .lock()
             .unwrap()
             .expect_all_docs()
             .returning(move || {
                 vec![
-                    DocumentId::from_u64s(100,200),
-                    DocumentId::from_u64s(100,201),
-                    DocumentId::from_u64s(100,202),
-                    DocumentId::from_u64s(100,203),
+                    DocumentId::from_u64s(100, 200),
+                    DocumentId::from_u64s(100, 201),
+                    DocumentId::from_u64s(100, 202),
+                    DocumentId::from_u64s(100, 203),
                 ]
             });
 
@@ -144,36 +154,36 @@ pub mod test {
     pub fn document_stream_filter() {
         let (kb, components) = create_test_kb();
 
-        components.kb_impl
+        components
+            .kb_impl
             .lock()
             .unwrap()
             .expect_all_docs()
-            .returning(move || vec![
-                DocumentId::from_u64s(100,200),
-                DocumentId::from_u64s(100,201),
-                ]);
+            .returning(move || {
+                vec![
+                    DocumentId::from_u64s(100, 200),
+                    DocumentId::from_u64s(100, 201),
+                ]
+            });
 
-
-        let query = Query::AllDocs
-            .filter(Filter::FilterFn(Arc::new(|_| false)));
+        let query = Query::AllDocs.filter(Filter::FilterFn(Arc::new(|_| false)));
 
         let docs: Vec<DocumentId> = kb.query(query);
 
         assert!(docs.is_empty());
 
-        let query = Query::AllDocs
-            .filter(Filter::FilterFn(Arc::new(|_| true)));
+        let query = Query::AllDocs.filter(Filter::FilterFn(Arc::new(|_| true)));
 
         let docs: Vec<DocumentId> = kb.query(query);
         assert_eq!(docs.len(), 2);
     }
 
-
     #[test]
     pub fn sequence_streams() {
         let (kb, components) = create_test_kb();
 
-        components.kb_impl
+        components
+            .kb_impl
             .lock()
             .unwrap()
             .expect_all_docs()
@@ -222,7 +232,11 @@ pub mod test {
             }
         }
 
-        pub fn set_text_search_results(&mut self, key: &str, score_and_ids: Vec<(f32, DocumentId)>) {
+        pub fn set_text_search_results(
+            &mut self,
+            key: &str,
+            score_and_ids: Vec<(f32, DocumentId)>,
+        ) {
             self.full_text_index
                 .lock()
                 .unwrap()
@@ -232,14 +246,18 @@ pub mod test {
                 .returning(move |_, _| Ok(score_and_ids.clone()));
         }
 
-        pub fn set_vector_search_results(&mut self, key: Vec<f32>, score_and_ids: Vec<(f32, DocumentId)>) {
+        pub fn set_vector_search_results(
+            &mut self,
+            key: Vec<f32>,
+            score_and_ids: Vec<(f32, DocumentId)>,
+        ) {
             self.vector_index
                 .lock()
                 .unwrap()
                 .expect_search()
                 .once()
                 .with(predicate::eq(key), predicate::always(), predicate::always())
-                .returning(move |_,_,_| Ok(score_and_ids.clone()));
+                .returning(move |_, _, _| Ok(score_and_ids.clone()));
         }
 
         pub fn set_all_doc_ids(&mut self, all_doc_ids: &[DocumentId]) {
@@ -253,11 +271,14 @@ pub mod test {
         }
 
         pub fn set_document_metadata(&mut self, doc_id: &DocumentId, kvs: &[(&str, &str)]) {
-            for (k,v) in kvs {
+            for (k, v) in kvs {
                 let v = v.to_string();
-                self.metadata_store.lock().unwrap().expect_get_metadata()
+                self.metadata_store
+                    .lock()
+                    .unwrap()
+                    .expect_get_metadata()
                     .with(predicate::eq(doc_id.clone()), predicate::eq(k.to_string()))
-                .returning(move |_,_| Some(v.clone()));
+                    .returning(move |_, _| Some(v.clone()));
             }
         }
     }
@@ -277,8 +298,8 @@ pub mod test {
 
         let id1 = DocumentId::from_u64s(123, 1);
         let id2 = DocumentId::from_u64s(123, 2);
-        let id3 =  DocumentId::from_u64s(123, 3);
-        let id4 =  DocumentId::from_u64s(123, 4);
+        let id3 = DocumentId::from_u64s(123, 3);
+        let id4 = DocumentId::from_u64s(123, 4);
 
         let docs_for_tofu = vec![
             (1.0, (&id1).clone()),
@@ -292,10 +313,7 @@ pub mod test {
         let docs = kb.query(Query::AllDocs.with_text_query("tofu"));
 
         assert_eq!(docs.len(), 2);
-        assert_eq!(
-            docs,
-            vec![id1.clone(), id3.clone()]
-        );
+        assert_eq!(docs, vec![id1.clone(), id3.clone()]);
     }
 
     #[test]
@@ -308,8 +326,8 @@ pub mod test {
 
         let id1 = DocumentId::from_u64s(123, 1);
         let id2 = DocumentId::from_u64s(123, 2);
-        let id3 =  DocumentId::from_u64s(123, 3);
-        let id4 =  DocumentId::from_u64s(123, 4);
+        let id3 = DocumentId::from_u64s(123, 3);
+        let id4 = DocumentId::from_u64s(123, 4);
 
         let key = vec![1.0, 2.0];
         let docs_for_key = vec![
@@ -324,17 +342,11 @@ pub mod test {
         let docs = kb.query(Query::AllDocs.with_vector_query(key.clone()));
 
         assert_eq!(docs.len(), 2);
-        assert_eq!(
-            docs,
-            vec![id1.clone(), id3.clone()]
-        );
+        assert_eq!(docs, vec![id1.clone(), id3.clone()]);
     }
-
 
     #[test]
     pub fn can_add_and_retrieve_a_document() {
         todo!();
     }
-
-
 }

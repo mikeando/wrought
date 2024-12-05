@@ -22,13 +22,18 @@ impl InMemoryKnowledgeBase {
 
 impl KnowledgeBaseImpl for InMemoryKnowledgeBase {
     fn all_docs(&self) -> Vec<DocumentId> {
-        self.documents.lock().unwrap().iter().map(|doc| doc.id.clone()).collect()
+        self.documents
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|doc| doc.id.clone())
+            .collect()
     }
 
     fn add_document(&mut self, content: DocumentContent) -> Result<DocumentId, KnowledgeBaseError> {
         use sha2::Digest;
 
-        self.last_id_seed +=1;
+        self.last_id_seed += 1;
         let mut seed_content = b"crazy_seed".to_vec();
         seed_content.append(&mut self.last_id_seed.to_le_bytes().to_vec());
         let digest = sha2::Sha256::digest(seed_content);
@@ -36,7 +41,10 @@ impl KnowledgeBaseImpl for InMemoryKnowledgeBase {
 
         let mut docs = self.documents.lock().unwrap();
 
-        docs.push(Document{ id: doc_id.clone() , content});
+        docs.push(Document {
+            id: doc_id.clone(),
+            content,
+        });
         Ok(doc_id)
     }
 
@@ -65,14 +73,18 @@ impl KnowledgeBaseImpl for InMemoryKnowledgeBase {
     }
 
     fn get_document(&self, doc_id: &DocumentId) -> Option<Document> {
-        self.documents.lock().unwrap().iter().find(|e| e.id == *doc_id).cloned()
+        self.documents
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|e| e.id == *doc_id)
+            .cloned()
     }
-    
+
     // fn get_document(&self, doc_id: &DocumentId) -> Option<Document> {
     //     let docs = self.documents.lock().unwrap();
     //     docs.iter().find(|doc| doc.id() == doc_id).cloned()
     // }
-    
 }
 
 // Tests for the InMemoryKnowledgeBase
@@ -81,14 +93,16 @@ mod tests {
     use super::*;
     use std::collections::HashMap;
 
-    fn create_test_document(
-        doc_id: DocumentId, 
-        content: &str,
-    ) -> Document {
+    fn create_test_document(doc_id: DocumentId, content: &str) -> Document {
         let mut metadata = HashMap::new();
         metadata.insert("test_key".to_string(), "test_value".to_string());
 
-        Document{ id: doc_id, content: DocumentContent { content: content.to_string()} }
+        Document {
+            id: doc_id,
+            content: DocumentContent {
+                content: content.to_string(),
+            },
+        }
     }
 
     #[test]
@@ -151,7 +165,7 @@ mod tests {
     fn test_delete_nonexistent_document() {
         let mut kb = InMemoryKnowledgeBase::new();
 
-        let doc_id = DocumentId::from_u64s(100,200);
+        let doc_id = DocumentId::from_u64s(100, 200);
 
         // Delete should fail
         let result = kb.delete_document(&doc_id);

@@ -81,7 +81,6 @@ impl Debug for Binary16 {
     }
 }
 
-
 macro_rules! build_id_type {
     ($name: ident) => {
         #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
@@ -91,21 +90,21 @@ macro_rules! build_id_type {
             pub fn from_string(s: &str) -> anyhow::Result<$name> {
                 Binary16::from_string(s).map($name)
             }
-        
+
             pub fn from_raw(id: [u8; 16]) -> $name {
                 $name(Binary16::from_raw(id))
             }
-        
+
             pub fn is_zero(&self) -> bool {
                 self.0.is_zero()
             }
-        
+
             pub fn zero() -> $name {
                 $name(Binary16::zero())
             }
 
             pub fn from_u64s(low: u64, high: u64) -> $name {
-                $name(Binary16::from_u64s(low,high))
+                $name(Binary16::from_u64s(low, high))
             }
         }
 
@@ -114,7 +113,7 @@ macro_rules! build_id_type {
                 std::fmt::Display::fmt(&self.0, f)
             }
         }
-        
+
         impl Serialize for $name {
             fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
             where
@@ -123,7 +122,7 @@ macro_rules! build_id_type {
                 self.0.serialize(serializer)
             }
         }
-        
+
         impl<'de> Deserialize<'de> for $name {
             fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
             where
@@ -153,6 +152,3 @@ impl ContentHash {
 }
 
 build_id_type!(DocumentId);
-
-
-

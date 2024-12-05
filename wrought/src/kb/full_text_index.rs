@@ -131,7 +131,7 @@ mod tests {
 
         // Create content store
         let doc_content = "This is a bunch of random content";
-        let doc_id = DocumentId::from_u64s(10,20);
+        let doc_id = DocumentId::from_u64s(10, 20);
 
         // Index the document
         full_text_index.index_document(&doc_id, doc_content)?;
