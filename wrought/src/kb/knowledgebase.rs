@@ -15,8 +15,8 @@ use super::{
 #[derive(Clone)]
 pub struct KnowledgeBase {
     pub kb: Arc<Mutex<dyn KnowledgeBaseImpl>>,
+
     pub content_store: Arc<Mutex<dyn ContentStore + Send + Sync>>,
-    // Or does this belong inside the kb itself?
     pub full_text_index: Arc<Mutex<dyn FullTextIndex + Send + Sync>>,
     pub vector_index: Arc<Mutex<dyn VectorIndex + Send + Sync>>,
     pub metadata_store: Arc<Mutex<dyn MetadataStore + Send + Sync>>,

@@ -2,7 +2,6 @@
 pub mod internal {
     use mockall::mock;
 
-    use crate::kb::document::Document;
     use crate::kb::document::DocumentId;
     use crate::kb::full_text_index::FullTextIndex;
     use crate::kb::kb_impl::KnowledgeBaseImpl;
@@ -16,11 +15,8 @@ pub mod internal {
 
         impl KnowledgeBaseImpl for KnowledgeBaseImpl {
             fn all_docs(&self) -> Vec<DocumentId>;
-
-            fn add_document(&mut self, doc: crate::kb::document::DocumentContent) -> Result<DocumentId, KnowledgeBaseError>;
-            fn update_document(&mut self, doc: Document) -> Result<(), KnowledgeBaseError>;
+            fn new_document(&mut self) -> Result<DocumentId, KnowledgeBaseError>;
             fn delete_document(&mut self, doc_id: &DocumentId) -> Result<(), KnowledgeBaseError>;
-            fn get_document(&self, doc_id: &DocumentId) -> Option<Document>;
         }
     }
 
