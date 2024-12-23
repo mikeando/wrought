@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeMap,
     path::PathBuf,
     sync::{Arc, Mutex},
 };
@@ -45,16 +46,36 @@ impl ContentStore for FileSystemContentStore {
     }
 }
 
+#[derive(Default)]
+pub struct InMemoryContentStore {
+    id_to_content: BTreeMap<ContentHash, Vec<u8>>,
+}
+
+impl ContentStore for InMemoryContentStore {
+    fn store(&mut self, content: &[u8]) -> anyhow::Result<ContentHash> {
+        let content_hash = ContentHash::from_content(content);
+        self.id_to_content
+            .insert(content_hash.clone(), content.to_vec());
+        Ok(content_hash)
+    }
+
+    fn retrieve(&self, hash: ContentHash) -> anyhow::Result<Option<Vec<u8>>> {
+        let result = self.id_to_content.get(&hash).map(|e| e.clone());
+        Ok(result)
+    }
+}
+
 #[cfg(test)]
 pub mod tests {
     use std::{
+        collections::BTreeMap,
         path::PathBuf,
         sync::{Arc, Mutex},
     };
 
     use crate::binary16::ContentHash;
 
-    use super::{ContentStore, FileSystemContentStore};
+    use super::{ContentStore, FileSystemContentStore, InMemoryContentStore};
 
     fn simple_test_case() -> (Arc<Mutex<xfs::mockfs::MockFS>>, FileSystemContentStore) {
         use xfs::Xfs;
@@ -105,6 +126,173 @@ pub mod tests {
         let result = result.unwrap();
 
         assert_eq!(result, content);
+    }
+
+    // Helper function to create a new InMemoryContentStore
+    fn create_store() -> InMemoryContentStore {
+        InMemoryContentStore {
+            id_to_content: BTreeMap::new(),
+        }
+    }
+
+    #[test]
+    fn test_store_and_retrieve_content() {
+        let mut store = create_store();
+
+        // Test storing and retrieving content
+        let test_content = b"Hello, world!";
+        let hash = store.store(test_content).expect("Failed to store content");
+
+        // Verify the hash matches expected hash
+        let retrieved_content = store
+            .retrieve(hash.clone())
+            .expect("Failed to retrieve content")
+            .expect("Content not found");
+
+        assert_eq!(
+            test_content.to_vec(),
+            retrieved_content,
+            "Retrieved content does not match stored content"
+        );
+    }
+
+    #[test]
+    fn test_inmemory_store_multiple_contents() {
+        let mut store = create_store();
+
+        // Store multiple pieces of content
+        let content1 = b"First content";
+        let content2 = b"Second content";
+
+        let hash1 = store
+            .store(content1)
+            .expect("Failed to store first content");
+        let hash2 = store
+            .store(content2)
+            .expect("Failed to store second content");
+
+        // Verify both contents can be retrieved
+        let retrieved1 = store
+            .retrieve(hash1.clone())
+            .expect("Failed to retrieve first content")
+            .expect("First content not found");
+        let retrieved2 = store
+            .retrieve(hash2.clone())
+            .expect("Failed to retrieve second content")
+            .expect("Second content not found");
+
+        assert_eq!(
+            content1.to_vec(),
+            retrieved1,
+            "First retrieved content does not match"
+        );
+        assert_eq!(
+            content2.to_vec(),
+            retrieved2,
+            "Second retrieved content does not match"
+        );
+    }
+
+    #[test]
+    fn test_inmemory_retrieve_nonexistent_content() {
+        let store = create_store();
+
+        // Create a dummy content hash
+        let dummy_hash = ContentHash::from_content(b"Some nonexistent content");
+
+        // Attempt to retrieve nonexistent content
+        let result = store.retrieve(dummy_hash).expect("Failed to call retrieve");
+
+        assert!(
+            result.is_none(),
+            "Should return None for nonexistent content"
+        );
+    }
+
+    #[test]
+    fn test_inmemory_idempotent_storage() {
+        let mut store = create_store();
+
+        let content = b"Immutable content";
+
+        // Store content first time
+        let hash1 = store
+            .store(content)
+            .expect("Failed to store content first time");
+
+        // Store same content again
+        let hash2 = store
+            .store(content)
+            .expect("Failed to store content second time");
+
+        // Hashes should be identical for identical content
+        assert_eq!(
+            hash1, hash2,
+            "Identical content should produce the same hash"
+        );
+
+        // Verify content can be retrieved
+        let retrieved_content = store
+            .retrieve(hash1)
+            .expect("Failed to retrieve content")
+            .expect("Content not found");
+
+        assert_eq!(
+            content.to_vec(),
+            retrieved_content,
+            "Retrieved content does not match"
+        );
+    }
+
+    #[test]
+    fn test_inmemory_content_cannot_be_overwritten() {
+        let mut store = create_store();
+
+        let initial_content = b"Initial content";
+        let different_content = b"Different content";
+
+        // Store initial content
+        let hash = store
+            .store(initial_content)
+            .expect("Failed to store initial content");
+
+        // Attempt to "overwrite" with different content should not change the stored content
+        store
+            .store(different_content)
+            .expect("Failed to store different content");
+
+        // Retrieve and verify the original content remains unchanged
+        let retrieved_content = store
+            .retrieve(hash)
+            .expect("Failed to retrieve content")
+            .expect("Content not found");
+
+        assert_eq!(
+            initial_content.to_vec(),
+            retrieved_content,
+            "Content should remain unchanged"
+        );
+    }
+
+    #[test]
+    fn test_inmemory_empty_content() {
+        let mut store = create_store();
+
+        // Test storing and retrieving empty content
+        let empty_content: &[u8] = &[];
+        let hash = store
+            .store(empty_content)
+            .expect("Failed to store empty content");
+
+        let retrieved_content = store
+            .retrieve(hash.clone())
+            .expect("Failed to retrieve empty content")
+            .expect("Empty content not found");
+
+        assert!(
+            retrieved_content.is_empty(),
+            "Retrieved content should be empty"
+        );
     }
 }
 

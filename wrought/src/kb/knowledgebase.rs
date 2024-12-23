@@ -1,16 +1,16 @@
 use core::str;
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashSet,
     sync::{Arc, Mutex},
 };
 
 use crate::{binary16::ContentHash, content_store::ContentStore};
 
-use super::full_text_index::FullTextIndex;
 use super::{
     document::DocumentId, kb_impl::KnowledgeBaseImpl, metadata_store::MetadataStore, query::Query,
     vector_index::VectorIndex,
 };
+use super::{document::DocumentInfo, full_text_index::FullTextIndex, graph_index::GraphIndex};
 
 #[derive(Clone)]
 pub struct KnowledgeBase {
@@ -20,25 +20,10 @@ pub struct KnowledgeBase {
     pub full_text_index: Arc<Mutex<dyn FullTextIndex + Send + Sync>>,
     pub vector_index: Arc<Mutex<dyn VectorIndex + Send + Sync>>,
     pub metadata_store: Arc<Mutex<dyn MetadataStore + Send + Sync>>,
+    pub graph_index: Arc<Mutex<dyn GraphIndex + Send + Sync>>,
 }
 
 impl KnowledgeBase {
-    pub fn store_document(
-        &mut self,
-        doc_id: DocumentId,
-        content: &[u8],
-        metadata: HashMap<String, String>,
-    ) -> anyhow::Result<DocumentId> {
-        let content = str::from_utf8(content)?;
-
-        // Optionally index or persist metadata here
-        self.full_text_index
-            .lock()
-            .unwrap()
-            .index_document(&doc_id, content)?;
-        Ok(doc_id)
-    }
-
     pub fn get_content(&self, hash: &ContentHash) -> anyhow::Result<Option<Vec<u8>>> {
         self.content_store.lock().unwrap().retrieve(hash.clone())
     }
@@ -100,6 +85,115 @@ impl KnowledgeBase {
     pub(crate) fn get_metadata(&self, v: &DocumentId, key: &str) -> Option<String> {
         self.metadata_store.lock().unwrap().get_metadata(v, key)
     }
+
+    fn add_document(&mut self, doc_info: DocumentInfo) -> anyhow::Result<DocumentId> {
+        let doc_id = self
+            .kb
+            .lock()
+            .unwrap()
+            .new_document()
+            .map_err(|e| anyhow::anyhow!("Unable to create document"))?;
+        for tag in doc_info.tags {
+            self.kb
+                .lock()
+                .unwrap()
+                .add_tag(&doc_id, &tag)
+                .map_err(|e| anyhow::anyhow!("Unable to add tag"))?;
+        }
+
+        // Store the metadata
+        self.metadata_store
+            .lock()
+            .unwrap()
+            .set_all_metadata(&doc_id, &doc_info.metadata)
+            .map_err(|e| anyhow::anyhow!("Error storing metadata"))?;
+
+        // Store the content
+        if let Some(content) = doc_info.content {
+            let content_hash = self.content_store.lock().unwrap().store(&content)?;
+            self.kb
+                .lock()
+                .unwrap()
+                .set_content(&doc_id, &content_hash)
+                .map_err(|e| anyhow::anyhow!("Unable to set content"))?;
+
+            // Optionally index or persist metadata here
+            if let Ok(content) = String::from_utf8(content) {
+                self.full_text_index
+                    .lock()
+                    .unwrap()
+                    .index_document(&doc_id, &content)?;
+            }
+        }
+
+        // Store the vector keys
+        if !doc_info.vector_keys.is_empty() {
+            self.vector_index
+                .lock()
+                .unwrap()
+                .add_multiple_raw_for_doc(&doc_id, doc_info.vector_keys.clone())
+                .map_err(|e| anyhow::anyhow!("Unable to add vector keys"))?;
+        }
+
+        // Store the graph connections
+        if !doc_info.connections.is_empty() {
+            self.graph_index
+                .lock()
+                .unwrap()
+                .add_connections(&doc_id, &doc_info.connections)?;
+        }
+
+        Ok(doc_id)
+    }
+
+    fn get_document(&self, doc_id: &DocumentId) -> anyhow::Result<DocumentInfo> {
+        // First check its a document
+        let Some(document_base) = self
+            .kb
+            .lock()
+            .unwrap()
+            .get_doc_base(doc_id)
+            .map_err(|e| anyhow::anyhow!("Error loading document base:{:?}", e))?
+        else {
+            return Err(anyhow::anyhow!("Invalid document id {}", doc_id));
+        };
+
+        // Get the tags
+        let tags = document_base.tags;
+
+        // Get the metadata
+        let metadata = self.metadata_store.lock().unwrap().get_all_metadata(doc_id);
+
+        // Get the content
+        let content = if let Some(ch) = document_base.content_hash {
+            self.content_store.lock().unwrap().retrieve(ch)?
+        } else {
+            None
+        };
+
+        // Get the vector keys
+        let vector_keys = self
+            .vector_index
+            .lock()
+            .unwrap()
+            .keys_for_doc_id(doc_id)
+            .map_err(|e| anyhow::anyhow!("Error getting vector keys: {:?}", e))?;
+
+        // Get the connections
+        let connections = self
+            .graph_index
+            .lock()
+            .unwrap()
+            .connections_for_doc_id(doc_id)?;
+
+        Ok(DocumentInfo {
+            metadata,
+            tags,
+            content,
+            vector_keys,
+            connections,
+        })
+    }
 }
 
 #[derive(Debug)]
@@ -112,15 +206,24 @@ pub enum KnowledgeBaseError {
 #[cfg(test)]
 pub mod test {
 
+    use std::collections::BTreeMap;
+
     use mockall::predicate;
 
     use crate::{
-        content_store::mocks::MockContentStore,
+        content_store::{mocks::MockContentStore, InMemoryContentStore},
         kb::{
             filter::Filter,
+            full_text_index::{self, TantivyFullTextIndex},
+            graph_index::{Connection, InMemoryGraphIndex},
+            kb_impl,
+            memorykb::InMemoryKnowledgeBaseImpl,
+            metadata_store::{self, InMemoryMetadataStore},
             mock::internal::{
-                MockFullTextIndex, MockKnowledgeBaseImpl, MockMetadataStore, MockVectorIndex,
+                MockFullTextIndex, MockGraphIndex, MockKnowledgeBaseImpl, MockMetadataStore,
+                MockVectorIndex,
             },
+            vector_index::InMemoryVectorIndex,
         },
     };
 
@@ -197,28 +300,33 @@ pub mod test {
         assert_eq!(docs.len(), 2);
     }
 
-    pub struct TestComponents {
-        pub content_store: Arc<Mutex<MockContentStore>>,
-        pub full_text_index: Arc<Mutex<MockFullTextIndex>>,
-        pub vector_index: Arc<Mutex<MockVectorIndex>>,
-        pub kb_impl: Arc<Mutex<MockKnowledgeBaseImpl>>,
-        pub metadata_store: Arc<Mutex<MockMetadataStore>>,
+    pub struct InMemoryComponents {
+        pub content_store: Arc<Mutex<InMemoryContentStore>>,
+        pub full_text_index: Arc<Mutex<TantivyFullTextIndex>>,
+        pub vector_index: Arc<Mutex<InMemoryVectorIndex>>,
+        pub kb_impl: Arc<Mutex<InMemoryKnowledgeBaseImpl>>,
+        pub metadata_store: Arc<Mutex<InMemoryMetadataStore>>,
+        pub graph_index: Arc<Mutex<InMemoryGraphIndex>>,
     }
 
-    impl TestComponents {
-        pub fn new() -> TestComponents {
-            let content_store = Arc::new(Mutex::new(MockContentStore::new()));
-            let full_text_index = Arc::new(Mutex::new(MockFullTextIndex::default()));
-            let vector_index = Arc::new(Mutex::new(MockVectorIndex::default()));
-            let kb_impl = Arc::new(Mutex::new(MockKnowledgeBaseImpl::new()));
-            let metadata_store = Arc::new(Mutex::new(MockMetadataStore::new()));
+    impl InMemoryComponents {
+        pub fn new() -> InMemoryComponents {
+            let content_store = Arc::new(Mutex::new(InMemoryContentStore::default()));
+            let full_text_index =
+                Arc::new(Mutex::new(TantivyFullTextIndex::new_in_memory().unwrap()));
 
-            TestComponents {
+            let vector_index = Arc::new(Mutex::new(InMemoryVectorIndex::default()));
+            let kb_impl = Arc::new(Mutex::new(InMemoryKnowledgeBaseImpl::default()));
+            let metadata_store = Arc::new(Mutex::new(InMemoryMetadataStore::default()));
+            let graph_index = Arc::new(Mutex::new(InMemoryGraphIndex::default()));
+
+            InMemoryComponents {
                 content_store,
                 full_text_index,
                 vector_index,
                 kb_impl,
                 metadata_store,
+                graph_index,
             }
         }
 
@@ -229,6 +337,52 @@ pub mod test {
                 full_text_index: self.full_text_index.clone(),
                 vector_index: self.vector_index.clone(),
                 metadata_store: self.metadata_store.clone(),
+                graph_index: self.graph_index.clone(),
+            }
+        }
+    }
+
+    pub fn create_in_memory_kb() -> (KnowledgeBase, InMemoryComponents) {
+        let components = InMemoryComponents::new();
+        (components.build_kb(), components)
+    }
+
+    pub struct TestComponents {
+        pub content_store: Arc<Mutex<MockContentStore>>,
+        pub full_text_index: Arc<Mutex<MockFullTextIndex>>,
+        pub vector_index: Arc<Mutex<MockVectorIndex>>,
+        pub kb_impl: Arc<Mutex<MockKnowledgeBaseImpl>>,
+        pub metadata_store: Arc<Mutex<MockMetadataStore>>,
+        pub graph_index: Arc<Mutex<MockGraphIndex>>,
+    }
+
+    impl TestComponents {
+        pub fn new() -> TestComponents {
+            let content_store = Arc::new(Mutex::new(MockContentStore::new()));
+            let full_text_index = Arc::new(Mutex::new(MockFullTextIndex::default()));
+            let vector_index = Arc::new(Mutex::new(MockVectorIndex::default()));
+            let kb_impl = Arc::new(Mutex::new(MockKnowledgeBaseImpl::new()));
+            let metadata_store = Arc::new(Mutex::new(MockMetadataStore::new()));
+            let graph_index = Arc::new(Mutex::new(MockGraphIndex::new()));
+
+            TestComponents {
+                content_store,
+                full_text_index,
+                vector_index,
+                kb_impl,
+                metadata_store,
+                graph_index,
+            }
+        }
+
+        pub fn build_kb(&self) -> KnowledgeBase {
+            KnowledgeBase {
+                kb: self.kb_impl.clone(),
+                content_store: self.content_store.clone(),
+                full_text_index: self.full_text_index.clone(),
+                vector_index: self.vector_index.clone(),
+                metadata_store: self.metadata_store.clone(),
+                graph_index: self.graph_index.clone(),
             }
         }
 
@@ -347,6 +501,48 @@ pub mod test {
 
     #[test]
     pub fn can_add_and_retrieve_a_document() {
-        todo!();
+        let (mut kb, mut _components) = create_in_memory_kb();
+        let doc_info = DocumentInfo {
+            metadata: build_metadata(&[
+                ("some_key", "some_value"),
+                ("another_key", "a_different_value"),
+            ]),
+            tags: build_tags(&["a_tag", "another_tag"]),
+            content: build_content("This is some interesting content"),
+            vector_keys: build_vector_keys(&[&[1.0, 2.0, 3.0], &[3.0, 2.0, 1.0]]),
+            connections: build_connections(&[
+                (DocumentId::from_u64s(123, 456), "some connection", true), // Is not reverse direction.
+            ]),
+        };
+        let doc_id = kb.add_document(doc_info.clone()).unwrap();
+        let copy = kb.get_document(&doc_id).unwrap();
+        assert_eq!(doc_info, copy);
+    }
+
+    fn build_metadata(entries: &[(&str, &str)]) -> BTreeMap<String, String> {
+        entries
+            .iter()
+            .map(|(a, b)| (a.to_string(), b.to_string()))
+            .collect()
+    }
+
+    fn build_tags(tags: &[&str]) -> Vec<String> {
+        tags.iter().map(|a| a.to_string()).collect()
+    }
+
+    fn build_content(content: &str) -> Option<Vec<u8>> {
+        Some(content.as_bytes().to_vec())
+    }
+
+    fn build_vector_key(vk: &[f32]) -> Vec<f32> {
+        vk.to_vec()
+    }
+
+    fn build_vector_keys(vks: &[&[f32]]) -> Vec<Vec<f32>> {
+        vks.iter().map(|k| build_vector_key(k)).collect()
+    }
+
+    fn build_connections(connections: &[(DocumentId, &str, bool); 1]) -> Vec<Connection> {
+        connections.iter().map(|c| Connection {}).collect()
     }
 }

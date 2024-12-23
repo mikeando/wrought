@@ -1,14 +1,22 @@
+use std::collections::BTreeMap;
+
+use crate::binary16::ContentHash;
 pub use crate::binary16::DocumentId;
 
-#[deprecated]
-#[derive(Clone)]
-pub struct Document {
-    pub id: DocumentId,
-    pub content: DocumentContent,
+use super::graph_index::Connection;
+
+#[derive(PartialEq, Debug, Clone)]
+pub struct DocumentBase {
+    pub doc_id: DocumentId,
+    pub tags: Vec<String>,
+    pub content_hash: Option<ContentHash>,
 }
 
-#[deprecated]
-#[derive(Clone)]
-pub struct DocumentContent {
-    pub content: String,
+#[derive(PartialEq, Debug, Clone)]
+pub struct DocumentInfo {
+    pub metadata: BTreeMap<String, String>,
+    pub tags: Vec<String>,
+    pub content: Option<Vec<u8>>,
+    pub vector_keys: Vec<Vec<f32>>,
+    pub connections: Vec<Connection>,
 }
