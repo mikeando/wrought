@@ -20,10 +20,9 @@ pub mod file_history;
 pub mod fs_utils;
 pub mod kb;
 pub mod llm;
-pub mod luau_json;
+pub mod luau_bridge;
 pub mod metadata;
 pub mod project_status;
-pub mod scripting_luau;
 pub mod wasm_bridge;
 
 use binary16::ContentHash;
@@ -341,7 +340,7 @@ fn cmd_init(cmd: &InitCmd) -> anyhow::Result<()> {
     let bridge = create_bridge(path)?;
 
     if project_package.join("init.luau").is_file() {
-        scripting_luau::run_script(bridge.clone(), fs, &project_package.join("init.luau"))?;
+        luau_bridge::run_script(bridge.clone(), fs, &project_package.join("init.luau"))?;
         // TODO: Does this belong in the bridge?
         let event_log = create_event_log(path).unwrap();
         if let Some(event_group) = bridge.lock().unwrap().get_event_group() {
@@ -678,7 +677,7 @@ fn cmd_run_script(
     // TODO: Get rid of unwrap here...
     let extension = script_path.extension().unwrap();
     if extension == "luau" || extension == "lua" {
-        scripting_luau::run_script(bridge, fs, &script_path)
+        luau_bridge::run_script(bridge, fs, &script_path)
             .with_context(|| format!("error running lua script {}", cmd.script_name))?;
     } else if extension == "wasm" {
         wasm_bridge::run_script(bridge, fs, &script_path)
