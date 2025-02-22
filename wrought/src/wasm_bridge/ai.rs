@@ -6,7 +6,6 @@ use crate::llm::AiMessage;
 
 use super::CombinedContext;
 
-
 /*
     fn wrought_ai_query(
     query_ptr: *const u8,
@@ -30,7 +29,6 @@ pub fn wasm_ai_query(mut caller: Caller<'_, CombinedContext>, query_ptr: i32, qu
     let out_buf = serde_json::to_vec(&result).unwrap();
     caller.data_mut().0.call_buffer.call_buffer = Some(Ok(out_buf));
 }
-
 
 pub fn wasm_ai_message(mut caller: Caller<'_, CombinedContext>) {
     let app_state = &mut caller.data_mut().0;

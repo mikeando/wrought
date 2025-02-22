@@ -1,7 +1,8 @@
 use core::str;
 use std::{
     collections::HashSet,
-    sync::{Arc, Mutex}, vec,
+    sync::{Arc, Mutex},
+    vec,
 };
 
 use crate::{binary16::ContentHash, content_store::ContentStore};
@@ -535,7 +536,13 @@ pub mod test {
     }
 
     fn build_vector_key(vk: &[f32]) -> (Vec<f32>, ChunkMetadata) {
-        (vk.to_vec(), ChunkMetadata{offset: 0,length: 0})
+        (
+            vk.to_vec(),
+            ChunkMetadata {
+                offset: 0,
+                length: 0,
+            },
+        )
     }
 
     fn build_vector_keys(vks: &[&[f32]]) -> Vec<(Vec<f32>, ChunkMetadata)> {

@@ -5,6 +5,7 @@ pub mod internal {
     use crate::binary16::ContentHash;
     use crate::kb::document::DocumentBase;
     use crate::kb::document::DocumentId;
+    use crate::kb::embedding::{Embedding, EmbeddingError};
     use crate::kb::full_text_index::FullTextIndex;
     use crate::kb::graph_index::Connection;
     use crate::kb::graph_index::GraphIndex;
@@ -13,10 +14,9 @@ pub mod internal {
     use crate::kb::metadata_store::MetadataStore;
     use crate::kb::vector_index;
     use crate::kb::vector_index::Chunk;
-    use crate::kb::vector_index::VectorIndex;
-    use crate::kb::vector_index::Chunker;
     use crate::kb::vector_index::ChunkMetadata;
-    use crate::kb::embedding::{Embedding, EmbeddingError};
+    use crate::kb::vector_index::Chunker;
+    use crate::kb::vector_index::VectorIndex;
 
     mock! {
         pub KnowledgeBaseImpl {}
@@ -85,19 +85,23 @@ pub mod internal {
     // We can't use mockall for Chunker because it has a lifetime parameter
     // We'll add our own basic mock impl here
     pub struct MockChunker {
-        pub expectations: Vec<(&'static [u8],  Vec<Chunk<'static>>)>,
+        pub expectations: Vec<(&'static [u8], Vec<Chunk<'static>>)>,
     }
 
-
-    impl <'b> Chunker for MockChunker {
-        fn chunk<'a>(&self, data:&'a [u8]) -> Vec<Chunk<'a>> {
+    impl<'b> Chunker for MockChunker {
+        fn chunk<'a>(&self, data: &'a [u8]) -> Vec<Chunk<'a>> {
             for (input, output) in &self.expectations {
                 if *input == data {
-                    return output.iter().map(|o| Chunk{ data: o.data, offset: o.offset }).collect();
+                    return output
+                        .iter()
+                        .map(|o| Chunk {
+                            data: o.data,
+                            offset: o.offset,
+                        })
+                        .collect();
                 }
             }
             panic!("Unexpected input to MockChunker::chunk");
         }
     }
-    
 }

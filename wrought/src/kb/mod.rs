@@ -1,5 +1,6 @@
 pub mod docset;
 pub mod document;
+pub mod embedding;
 pub mod filter;
 pub mod full_text_index;
 pub mod graph_index;
@@ -9,7 +10,6 @@ pub mod memorykb;
 pub mod metadata_store;
 pub mod query;
 pub mod vector_index;
-pub mod embedding;
 
 #[cfg(test)]
 pub mod mock;

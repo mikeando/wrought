@@ -1,5 +1,5 @@
-pub mod io;
 pub mod ai;
+pub mod io;
 pub mod templates;
 
 use std::collections::BTreeMap;
@@ -53,7 +53,6 @@ pub fn run_script(
 ) -> anyhow::Result<()> {
     run_script_ex(bridge, fs, script_path, |_| Ok(()))
 }
-
 
 // The additional F function is used to add hooks when testing
 pub fn run_script_ex<F>(

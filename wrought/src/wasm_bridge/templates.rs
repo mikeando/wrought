@@ -4,7 +4,6 @@ use wrought_wasm_bindings::WroughtResult;
 
 use super::CombinedContext;
 
-
 // fn wrought_init_template();
 pub fn wasm_init_template(mut caller: Caller<'_, CombinedContext>) {
     // let memory = caller.get_export("memory").unwrap().into_memory().unwrap();
@@ -99,19 +98,19 @@ pub fn wasm_render_template(
 
 pub fn reigister_functions(linker: &mut Linker<CombinedContext>) -> anyhow::Result<()> {
     linker
-    .func_wrap("env", "wrought_render_template", wasm_render_template)
-    .with_context(|| "Error installing wrought_render_template function")?;
+        .func_wrap("env", "wrought_render_template", wasm_render_template)
+        .with_context(|| "Error installing wrought_render_template function")?;
 
-linker
-    .func_wrap("env", "wrought_drop_template", wasm_drop_template)
-    .with_context(|| "Error installing wrought_drop_template function")?;
+    linker
+        .func_wrap("env", "wrought_drop_template", wasm_drop_template)
+        .with_context(|| "Error installing wrought_drop_template function")?;
 
-linker
-    .func_wrap("env", "wrought_init_template", wasm_init_template)
-    .with_context(|| "Error installing wrought_drop_template function")?;
+    linker
+        .func_wrap("env", "wrought_init_template", wasm_init_template)
+        .with_context(|| "Error installing wrought_drop_template function")?;
 
-linker
-    .func_wrap("env", "wrought_add_templates", wasm_add_templates)
-    .with_context(|| "Error installing wrought_add_templates function")?;
+    linker
+        .func_wrap("env", "wrought_add_templates", wasm_add_templates)
+        .with_context(|| "Error installing wrought_add_templates function")?;
     Ok(())
 }

@@ -135,20 +135,20 @@ pub fn wasm_set_metadata(
 }
 
 pub fn reigister_functions(linker: &mut Linker<CombinedContext>) -> anyhow::Result<()> {
-linker
-    .func_wrap("env", "wrought_write_file", wasm_write_file)
-    .with_context(|| "Error installing wrought_write_file function")?;
+    linker
+        .func_wrap("env", "wrought_write_file", wasm_write_file)
+        .with_context(|| "Error installing wrought_write_file function")?;
 
-linker
-    .func_wrap("env", "wrought_read_file", wasm_read_file)
-    .with_context(|| "Error installing wrought_read_file function")?;
+    linker
+        .func_wrap("env", "wrought_read_file", wasm_read_file)
+        .with_context(|| "Error installing wrought_read_file function")?;
 
-linker
-    .func_wrap("env", "wrought_get_metadata", wasm_get_metadata)
-    .with_context(|| "Error installing wrought_get_metadata function")?;
+    linker
+        .func_wrap("env", "wrought_get_metadata", wasm_get_metadata)
+        .with_context(|| "Error installing wrought_get_metadata function")?;
 
-linker
-    .func_wrap("env", "wrought_set_metadata", wasm_set_metadata)
-    .with_context(|| "Error installing wrought_set_metadata function")?;
-Ok(())
+    linker
+        .func_wrap("env", "wrought_set_metadata", wasm_set_metadata)
+        .with_context(|| "Error installing wrought_set_metadata function")?;
+    Ok(())
 }
