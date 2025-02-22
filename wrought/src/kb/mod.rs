@@ -9,6 +9,7 @@ pub mod memorykb;
 pub mod metadata_store;
 pub mod query;
 pub mod vector_index;
+pub mod embedding;
 
 #[cfg(test)]
 pub mod mock;

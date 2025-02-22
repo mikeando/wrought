@@ -1,7 +1,7 @@
 use core::str;
 use std::{
     collections::HashSet,
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex}, vec,
 };
 
 use crate::{binary16::ContentHash, content_store::ContentStore};
@@ -223,7 +223,7 @@ pub mod test {
                 MockFullTextIndex, MockGraphIndex, MockKnowledgeBaseImpl, MockMetadataStore,
                 MockVectorIndex,
             },
-            vector_index::InMemoryVectorIndex,
+            vector_index::{ChunkMetadata, InMemoryVectorIndex},
         },
     };
 
@@ -534,11 +534,11 @@ pub mod test {
         Some(content.as_bytes().to_vec())
     }
 
-    fn build_vector_key(vk: &[f32]) -> Vec<f32> {
-        vk.to_vec()
+    fn build_vector_key(vk: &[f32]) -> (Vec<f32>, ChunkMetadata) {
+        (vk.to_vec(), ChunkMetadata{offset: 0,length: 0})
     }
 
-    fn build_vector_keys(vks: &[&[f32]]) -> Vec<Vec<f32>> {
+    fn build_vector_keys(vks: &[&[f32]]) -> Vec<(Vec<f32>, ChunkMetadata)> {
         vks.iter().map(|k| build_vector_key(k)).collect()
     }
 
