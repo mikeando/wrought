@@ -28,7 +28,7 @@ impl KnowledgeBase {
         self.content_store.lock().unwrap().retrieve(hash.clone())
     }
 
-    fn query(&self, query: Query) -> Vec<DocumentId> {
+    pub fn query(&self, query: Query) -> Vec<DocumentId> {
         match query {
             Query::AllDocs => self.kb.lock().unwrap().all_docs(),
             Query::EmptyStream => vec![],
@@ -86,7 +86,7 @@ impl KnowledgeBase {
         self.metadata_store.lock().unwrap().get_metadata(v, key)
     }
 
-    fn add_document(&mut self, doc_info: DocumentInfo) -> anyhow::Result<DocumentId> {
+    pub fn add_document(&mut self, doc_info: DocumentInfo) -> anyhow::Result<DocumentId> {
         let doc_id = self
             .kb
             .lock()
@@ -146,7 +146,7 @@ impl KnowledgeBase {
         Ok(doc_id)
     }
 
-    fn get_document(&self, doc_id: &DocumentId) -> anyhow::Result<DocumentInfo> {
+    pub fn get_document(&self, doc_id: &DocumentId) -> anyhow::Result<DocumentInfo> {
         // First check its a document
         let Some(document_base) = self
             .kb

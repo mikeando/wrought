@@ -24,7 +24,7 @@ pub mod luau_json;
 pub mod metadata;
 pub mod project_status;
 pub mod scripting_luau;
-pub mod scripting_wasm;
+pub mod wasm_bridge;
 
 use binary16::ContentHash;
 use content_store::{ContentStore, FileSystemContentStore};
@@ -681,7 +681,7 @@ fn cmd_run_script(
         scripting_luau::run_script(bridge, fs, &script_path)
             .with_context(|| format!("error running lua script {}", cmd.script_name))?;
     } else if extension == "wasm" {
-        scripting_wasm::run_script(bridge, fs, &script_path)
+        wasm_bridge::run_script(bridge, fs, &script_path)
             .with_context(|| format!("error running WASM script {}", cmd.script_name))?;
     } else {
         bail!(
