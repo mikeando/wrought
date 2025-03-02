@@ -5,7 +5,7 @@ use std::{
     vec,
 };
 
-use crate::{binary16::ContentHash, content_store::ContentStore};
+use crate::{binary16::ContentHash, bridge::KBDoc, content_store::ContentStore};
 
 use super::{
     document::DocumentId, kb_impl::KnowledgeBaseImpl, metadata_store::MetadataStore, query::Query,
@@ -13,15 +13,43 @@ use super::{
 };
 use super::{document::DocumentInfo, full_text_index::FullTextIndex, graph_index::GraphIndex};
 
+// TODO: Rename this KnowledgeBase and the KnowledgeBase struct to KnowledgeBaseImpl or similar.
+pub trait KnowledgeBaseTrait {
+    // TODO: I think there is a different struct we can use fo this already?
+    fn ingest(&mut self, doc: &KBDoc) -> anyhow::Result<()>;
+}
+
 #[derive(Clone)]
 pub struct KnowledgeBase {
-    pub kb: Arc<Mutex<dyn KnowledgeBaseImpl>>,
+    pub kb: Arc<Mutex<dyn KnowledgeBaseImpl + Send>>,
+    pub content_store: Arc<Mutex<dyn ContentStore + Send>>,
+    pub full_text_index: Arc<Mutex<dyn FullTextIndex + Send>>,
+    pub vector_index: Arc<Mutex<dyn VectorIndex + Send>>,
+    pub metadata_store: Arc<Mutex<dyn MetadataStore + Send>>,
+    pub graph_index: Arc<Mutex<dyn GraphIndex + Send>>,
+}
 
-    pub content_store: Arc<Mutex<dyn ContentStore + Send + Sync>>,
-    pub full_text_index: Arc<Mutex<dyn FullTextIndex + Send + Sync>>,
-    pub vector_index: Arc<Mutex<dyn VectorIndex + Send + Sync>>,
-    pub metadata_store: Arc<Mutex<dyn MetadataStore + Send + Sync>>,
-    pub graph_index: Arc<Mutex<dyn GraphIndex + Send + Sync>>,
+impl KnowledgeBaseTrait for KnowledgeBase {
+    fn ingest(&mut self, doc: &KBDoc) -> anyhow::Result<()> {
+        // First get a document id
+        let doc_id = self.kb.lock().unwrap().new_document()?;
+        for tag in &doc.tags {
+            self.kb.lock().unwrap().add_tag(&doc_id, &tag)?;
+        }
+        // Now lets store it into the content store
+        let content_hash = self.content_store.lock().unwrap().store(doc.content.as_bytes())?;
+        self.kb.lock().unwrap().set_content(&doc_id, &content_hash)?;
+
+        // Now we need to index it in all the ways...
+        self.full_text_index.lock().unwrap().index_document(&doc_id, &doc.content)?;
+        self.vector_index.lock().unwrap().index_document(&doc_id, &doc.content)?;
+
+        // TODO: I'm not sure what we put into the metadata store...
+        // TODO: I'm not sure what we put into the graph index either...
+        
+        eprintln!("KnowledgeBase::ingest: doc = {:?}", doc);
+        Ok(())
+    }
 }
 
 impl KnowledgeBase {
@@ -203,6 +231,14 @@ pub enum KnowledgeBaseError {
     DocumentAlreadyExists,
     DocumentNotFound,
 }
+
+impl From<KnowledgeBaseError> for anyhow::Error {
+    fn from(value: KnowledgeBaseError) -> Self {
+        use anyhow::anyhow;
+        anyhow!("KnowledgeBaseError: {:?}", value)
+    }
+}
+
 
 #[cfg(test)]
 pub mod test {

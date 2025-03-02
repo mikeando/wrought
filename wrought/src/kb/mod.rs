@@ -9,6 +9,7 @@ pub mod knowledgebase;
 pub mod memorykb;
 pub mod metadata_store;
 pub mod query;
+pub mod remote_embedding;
 pub mod vector_index;
 
 #[cfg(test)]

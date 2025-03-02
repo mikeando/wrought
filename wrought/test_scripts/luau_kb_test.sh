@@ -16,4 +16,4 @@ echo "INSTALLING SOME DOCS"
 cp -r test_resources/kb_test/research ${PROJECT_DIR}/research
 
 echo "RUNNING SIMPLE LUAU SCRIPT"
-${wrought} --project-root=${PROJECT_DIR} run-script test/kb_tool_test.luau
+${wrought} --project-root=${PROJECT_DIR} run-script test/kb_test.luau

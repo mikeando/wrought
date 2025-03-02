@@ -1,6 +1,8 @@
+
 #[derive(Debug)]
 pub enum EmbeddingError {
     TooManyTokens(usize),
+    Other(anyhow::Error),
 }
 
 pub trait Embedding {

@@ -2,6 +2,7 @@ pub mod ai;
 pub mod io;
 pub mod luau_json;
 pub mod templates;
+pub mod kb;
 
 #[cfg(test)]
 pub mod tests;
@@ -79,6 +80,7 @@ where
     io::register_functions(&bridge, &lua)?;
     ai::register_functions(&bridge, &lua)?;
     templates::register_functions(&bridge, &lua)?;
+    kb::register_functions(&bridge, &lua)?;
 
     f(&lua)?;
 
@@ -88,6 +90,6 @@ where
         .reader(script_path)?
         .read_to_string(&mut script)?;
 
-    lua.load(script).exec()?;
+    lua.load(script).set_name(format!("{}", script_path.display())).exec()?;
     Ok(())
 }

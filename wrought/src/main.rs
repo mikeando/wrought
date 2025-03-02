@@ -6,8 +6,6 @@ use std::{
 };
 
 use anyhow::{anyhow, bail, Context};
-use backend::{Backend, SimpleBackend};
-use bridge::{Bridge, SimpleBridge};
 use clap::{Parser, Subcommand};
 
 pub mod backend;
@@ -24,6 +22,10 @@ pub mod luau_bridge;
 pub mod metadata;
 pub mod project_status;
 pub mod wasm_bridge;
+pub mod package;
+
+use backend::{Backend, SimpleBackend};
+use bridge::{Bridge, SimpleBridge};
 
 use binary16::ContentHash;
 use content_store::{ContentStore, FileSystemContentStore};
@@ -32,12 +34,139 @@ use events::{Event, EventGroup};
 use events::{EventType, GetMetadataEvent, SetMetadataEvent, WriteFileEvent};
 
 use file_history::FileHistoryEntry;
+use kb::{full_text_index::{self, FullTextIndex, TantivyFullTextIndex}, graph_index::{GraphIndex, InMemoryGraphIndex}, kb_impl::KnowledgeBaseImpl, knowledgebase::{KnowledgeBase, KnowledgeBaseTrait}, memorykb::InMemoryKnowledgeBaseImpl, metadata_store::{InMemoryMetadataStore, MetadataStore}, vector_index::{InMemoryVectorIndex, VectorIndex}};
 use llm::{InvalidLLM, OpenAILLM, LLM};
 use metadata::MetadataEntry;
 use metadata::MetadataKey;
 use project_status::get_project_status;
 use serde::{Deserialize, Serialize};
 use xfs::Xfs;
+
+
+/// This struct is built up piece by piece as the settings for the
+/// project are read in. It is finally used to build the core structures
+pub struct WroughtBuilder {
+    project_path: PathBuf,
+    settings: toml::Table,
+    fs: Option<Arc<Mutex<xfs::OsFs>>>,
+    backend: Option<Arc<Mutex<dyn Backend + Send + 'static>>>,
+    content_store: Option<Arc<Mutex<dyn ContentStore + Send + 'static>>>,
+    llm: Option<Arc<Mutex<dyn LLM + Send + 'static>>>,
+    kb: Option<Arc<Mutex<dyn KnowledgeBaseTrait + Send + 'static>>>,
+
+    // kb internals
+    kb_impl: Option<Arc<Mutex<dyn KnowledgeBaseImpl + Send + 'static>>>,
+    kb_full_text_index: Option<Arc<Mutex<dyn FullTextIndex + Send + 'static>>>,
+    kb_vector_index: Option<Arc<Mutex<dyn VectorIndex + Send + 'static>>>, 
+    kb_metadata_store: Option<Arc<Mutex<dyn MetadataStore + Send + 'static>>>,
+    kb_graph_index: Option<Arc<Mutex<dyn GraphIndex + Send + 'static>>>,
+}
+
+impl WroughtBuilder {
+
+    pub fn new(path: &Path, settings: toml::Table) -> WroughtBuilder {
+        WroughtBuilder {
+            project_path: path.to_path_buf(),
+            settings,
+            fs: None,
+            backend: None,
+            content_store: None,
+            llm: None,
+            kb: None,
+            kb_impl: None,
+            kb_full_text_index: None,
+            kb_vector_index: None,
+            kb_metadata_store: None,
+            kb_graph_index: None,
+        }
+    }
+
+    pub fn init_fs(&mut self) -> anyhow::Result<()> {
+        self.fs = Some(Arc::new(Mutex::new(xfs::OsFs {})));
+        self.project_path = self.fs.as_ref().unwrap().lock().unwrap().canonicalize(&self.project_path)?;
+        Ok(())
+    }
+
+    pub fn init_content_store(&mut self) -> anyhow::Result<()> {
+        let fs = self.fs.as_ref().expect("fs not yet initialised").clone();
+        let content_storage_path = self.project_path.join(".wrought").join("content");
+        self.content_store = Some(Arc::new(Mutex::new(FileSystemContentStore::new(
+            fs.clone(),
+            content_storage_path,
+        ))));
+        Ok(())
+    }
+
+    pub fn init_backend(&mut self) -> anyhow::Result<()> {
+        let fs = self.fs.as_ref().expect("fs not yet initialised").clone();
+        let root = self.project_path.clone();
+        let content_store = self.content_store.as_ref().expect("content store not yet initialised").clone();
+
+        self.backend = Some(Arc::new(Mutex::new(SimpleBackend {
+            fs,
+            root,
+            content_store,
+        })));
+        Ok(())
+    }
+
+    pub fn init_llm(&mut self) -> anyhow::Result<()> {
+        let llm_cache_dir = self.project_path.join(".wrought").join("llm_cache");
+        self.fs.as_ref().unwrap().lock().unwrap().create_dir_all(&llm_cache_dir)?;
+        // TODO: Get this from somewhere...
+    
+        let openai_api_key = match self.settings.get("openai_api_key") {
+            Some(openai_api_key) => Some(
+                openai_api_key
+                    .as_str()
+                    .context("invalid setting: openai_api_key is not a string")?
+                    .to_string(),
+            ),
+            None => None,
+        };
+        self.llm = Some(match openai_api_key {
+            Some(openai_api_key) => {
+                let llm = OpenAILLM::create_with_key(openai_api_key, self.fs.as_ref().unwrap().clone(), llm_cache_dir)?;
+                Arc::new(Mutex::new(llm))
+            }
+            None => {
+                let llm =
+                    InvalidLLM::create_with_error_message("no openAI key specified in settings file");
+                Arc::new(Mutex::new(llm))
+            }
+        });
+        Ok(())
+    }
+    
+    fn init_kb(&mut self) -> anyhow::Result<()> {
+        // TODO: This is not the right type! we lose all information on restart.
+        self.kb_impl = Some(Arc::new(Mutex::new(InMemoryKnowledgeBaseImpl::default())));
+        // TODO: Should probably be able to switch between in-memory for testing and proper on-disk for production.
+        self.kb_full_text_index = Some(Arc::new(Mutex::new(TantivyFullTextIndex::new_in_memory()?)));
+        // TODO: Is this the right type? The default seems badly configured.
+        self.kb_vector_index = Some(Arc::new(Mutex::new(InMemoryVectorIndex::create()?)));
+        // TODO: Use non inmemory versions of these.
+        self.kb_metadata_store = Some(Arc::new(Mutex::new(InMemoryMetadataStore::default())));  
+        self.kb_graph_index = Some(Arc::new(Mutex::new(InMemoryGraphIndex::default())));
+        
+        let kb = self.kb_impl.as_ref().expect("kb_impl not yet initialised").clone();    
+        let content_store = self.content_store.as_ref().expect("content store not yet initialised").clone();
+        let full_text_index = self.kb_full_text_index.as_ref().expect("full_text_index not yet initialised").clone();
+        let vector_index = self.kb_vector_index.as_ref().expect("vector_index not yet initialised").clone();
+        let metadata_store = self.kb_metadata_store.as_ref().expect("metadata_store not yet initialised").clone();
+        let graph_index = self.kb_graph_index.as_ref().expect("graph_index not yet initialised").clone();
+
+        self.kb = Some(Arc::new(Mutex::new(KnowledgeBase{
+            content_store,
+            kb,
+            full_text_index,
+            vector_index,
+            metadata_store,
+            graph_index, 
+        })));
+        Ok(())
+    }
+}
 
 pub struct Wrought {
     backend: Arc<Mutex<dyn Backend>>,
@@ -55,8 +184,8 @@ impl Wrought {
         eprintln!("Wrough::begin_script - logged events =\n{:#?}", m.events);
     }
 
-    pub fn new(backend: Arc<Mutex<dyn Backend>>) -> Wrought {
-        Wrought { backend }
+    pub fn new(builder: &WroughtBuilder) -> Wrought {
+        Wrought { backend:builder.backend.as_ref().expect("backend not yet initialised").clone() }
     }
 }
 
@@ -359,131 +488,9 @@ fn cmd_init(cmd: &InitCmd) -> anyhow::Result<()> {
     Ok(())
 }
 
-#[derive(Debug)]
-struct PackageStatusEntry {
-    path: PathBuf,
-    title: String,
-    status: String,
-    next_steps: Vec<String>,
-}
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
-struct PackageStatusEntryRepr {
-    title: String,
-    status: String,
-    next_steps: Vec<String>,
-}
 
-impl PackageStatusEntry {
-    pub fn read_from(fs: &dyn xfs::Xfs, p: &Path) -> anyhow::Result<PackageStatusEntry> {
-        let mut content = String::new();
-        fs.reader(p)?.read_to_string(&mut content)?;
-        let content: PackageStatusEntryRepr = toml::from_str(&content)?;
 
-        Ok(PackageStatusEntry {
-            path: p.to_path_buf(),
-            title: content.title,
-            status: content.status,
-            next_steps: content.next_steps,
-        })
-    }
-
-    pub fn name(&self) -> String {
-        self.path.file_name().unwrap().to_string_lossy().to_string()
-    }
-}
-
-#[derive(Debug)]
-pub struct PackageStatus {
-    package: Package,
-    entries: Vec<anyhow::Result<PackageStatusEntry>>,
-}
-
-#[derive(Clone, Debug)]
-struct Package {
-    path: PathBuf,
-}
-
-impl Package {
-    fn status(&self, fs: &dyn xfs::Xfs) -> PackageStatus {
-        let status_dir = self.path.join("status");
-        let mut entries = vec![];
-
-        let mut f = |fs: &dyn Xfs, entry: &dyn xfs::XfsDirEntry| -> anyhow::Result<()> {
-            let md = match entry.metadata() {
-                Ok(md) => md,
-                Err(e) => {
-                    entries.push(
-                        Err(e).with_context(|| format!("getting metadata for {:?}", entry.path())),
-                    );
-                    return Ok(());
-                }
-            };
-            if !md.is_file() {
-                entries.push(Err(anyhow!(
-                    "status entry {:?} is not a file",
-                    entry.path()
-                )));
-                return Ok(());
-            }
-
-            entries.push(PackageStatusEntry::read_from(fs, &entry.path()));
-            Ok(())
-        };
-
-        if let Err(e) = fs.on_each_entry(&status_dir, &mut f) {
-            entries.push(
-                Err(e).with_context(|| format!("while reading statuses from {:?}", status_dir)),
-            );
-        }
-        PackageStatus {
-            package: self.clone(),
-            entries,
-        }
-    }
-
-    fn name(&self) -> String {
-        self.path.file_name().unwrap().to_str().unwrap().to_string()
-    }
-}
-
-struct PackageDirectory {
-    path: PathBuf,
-}
-
-impl PackageDirectory {
-    fn packages(&self, fs: &dyn xfs::Xfs) -> Vec<anyhow::Result<Package>> {
-        let mut result = vec![];
-
-        let mut f = |_fs: &dyn Xfs, entry: &dyn xfs::XfsDirEntry| -> anyhow::Result<()> {
-            let md = match entry.metadata() {
-                Err(e) => {
-                    result.push(
-                        Err(e).with_context(|| format!("getting metadata for {:?}", entry.path())),
-                    );
-                    return Ok(());
-                }
-                Ok(md) => md,
-            };
-            if !md.is_dir() {
-                result.push(Err(anyhow!(
-                    "package directory entry {:?} is not a directory",
-                    entry.path()
-                )));
-                return Ok(());
-            }
-            result.push(Ok(Package { path: entry.path() }));
-            Ok(())
-        };
-
-        if let Err(e) = fs.on_each_entry(&self.path, &mut f) {
-            result.push(
-                Err(e).with_context(|| format!("while reading packages from {:?}", self.path)),
-            );
-        }
-        result
-    }
-}
 
 struct StatusFormatter {
     use_color: bool,
@@ -692,20 +699,7 @@ fn cmd_run_script(
     Ok(())
 }
 
-pub fn create_backend(path: &Path) -> anyhow::Result<Arc<Mutex<dyn Backend + Send + 'static>>> {
-    let fs = Arc::new(Mutex::new(xfs::OsFs {}));
-    let path = fs.lock().unwrap().canonicalize(path)?;
-    let content_storage_path = path.join(".wrought").join("content");
-    let content_store = Arc::new(Mutex::new(FileSystemContentStore::new(
-        fs.clone(),
-        content_storage_path,
-    )));
-    Ok(Arc::new(Mutex::new(SimpleBackend {
-        fs,
-        root: path,
-        content_store,
-    })))
-}
+
 
 pub fn create_event_log(path: &Path) -> anyhow::Result<Arc<Mutex<dyn EventLog>>> {
     Ok(Arc::new(Mutex::new(
@@ -730,37 +724,20 @@ pub fn create_bridge(path: &Path) -> anyhow::Result<Arc<Mutex<dyn Bridge + Send 
         }
         None => toml::Table::new(),
     };
-    let backend = create_backend(path)?;
-    let llm_cache_dir = root.join(".wrought").join("llm_cache");
-    fs.lock().unwrap().create_dir_all(&llm_cache_dir)?;
-    // TODO: Get this from somewhere...
 
-    let openai_api_key = match settings.get("openai_api_key") {
-        Some(openai_api_key) => Some(
-            openai_api_key
-                .as_str()
-                .context("invalid setting: openai_api_key is not a string")?
-                .to_string(),
-        ),
-        None => None,
-    };
-    let llm: Arc<Mutex<dyn LLM + Send + 'static>> = match openai_api_key {
-        Some(openai_api_key) => {
-            let llm = OpenAILLM::create_with_key(openai_api_key, fs, llm_cache_dir)?;
-            Arc::new(Mutex::new(llm))
-        }
-        None => {
-            let llm =
-                InvalidLLM::create_with_error_message("no openAI key specified in settings file");
-            Arc::new(Mutex::new(llm))
-        }
-    };
+    let mut builder = WroughtBuilder::new(&path, settings);
+    builder.init_fs()?;
+    builder.init_content_store()?;
+    builder.init_backend()?;
+    builder.init_llm()?;
+    builder.init_kb()?;
 
     Ok(Arc::new(Mutex::new(SimpleBridge {
         root,
-        backend,
+        backend: builder.backend.unwrap(),
         event_group: EventGroup::empty(),
-        llm,
+        llm: builder.llm.unwrap(),
+        kb: builder.kb.unwrap(),
     })))
 }
 
@@ -917,8 +894,11 @@ fn main() {
             };
             // eprintln!("Using project root: '{}'", project_root.display());
 
-            let backend = create_backend(&project_root).unwrap();
-            let mut w = Wrought::new(backend);
+            let mut builder = WroughtBuilder::new(&project_root, toml::Table::new());
+            builder.init_fs().unwrap();
+            builder.init_content_store().unwrap();
+            builder.init_backend().unwrap();
+            let mut w = Wrought::new(&builder);
             hello_world(&mut w);
         }
         Command::Status(cmd) => {

@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod tests {
     use crate::{
-        bridge::Bridge,
+        bridge::{Bridge, KBDoc},
         events::EventGroup,
         luau_bridge::{run_script, run_script_ex},
     };
@@ -26,6 +26,7 @@ mod tests {
             fn get_event_group(&self) -> Option<EventGroup>;
             fn ai_message(&mut self) -> anyhow::Result<crate::llm::AiMessage>;
             fn send_ai_message(&mut self, message:&crate::llm::AiMessage) -> anyhow::Result<serde_json::Value>;
+            fn kb_ingest(&mut self, doc: &KBDoc) -> anyhow::Result<()>;
         }
     }
 

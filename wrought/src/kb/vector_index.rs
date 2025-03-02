@@ -7,7 +7,7 @@ use crate::metadata;
 
 use super::{
     document::DocumentId,
-    embedding::{Embedding, EmbeddingError, RandomEmbedding},
+    embedding::{Embedding, EmbeddingError, RandomEmbedding}, remote_embedding::EmbeddingClient,
 };
 
 #[derive(Debug)]
@@ -15,6 +15,13 @@ pub enum VectorIndexError {
     VectorSizeMismatch { expected: usize, actual: usize },
     DocumentTooLong,
     EmbeddingError(EmbeddingError),
+}
+
+impl From<VectorIndexError> for anyhow::Error {
+    fn from(value: VectorIndexError) -> Self {
+        use anyhow::anyhow;
+        anyhow!("VectorIndexError: {:?}", value)
+    }
 }
 
 pub type Result<T> = std::result::Result<T, VectorIndexError>;
@@ -60,6 +67,34 @@ pub trait Chunker {
     fn chunk<'a>(&self, data: &'a [u8]) -> Vec<Chunk<'a>>;
 }
 
+struct NonoverlappingByteChunker {
+    target_chunk_length: usize    
+}
+
+impl Chunker for NonoverlappingByteChunker {
+    fn chunk<'a>(&self, data: &'a [u8]) -> Vec<Chunk<'a>> {
+        // number of chunks rounded up.
+        let n_chunks = (data.len() + self.target_chunk_length - 1)  / self.target_chunk_length;
+        // chunk length rounded up.
+        let mut result = vec![];
+        let chunk_length = (data.len() + n_chunks - 1) / n_chunks;
+        for i_chunk in  0..n_chunks {
+            let end_index = if i_chunk==n_chunks-1 {
+                data.len()
+            } else {
+                (i_chunk+1) * chunk_length
+            };
+            let chunk = Chunk{
+                data: &data[i_chunk*chunk_length .. end_index],
+                offset: i_chunk * chunk_length,
+            };
+            result.push(chunk)
+        }
+        result
+    }
+}
+
+// TODO: Add some tests for this... I dont think it is right yet.
 struct SimpleByteChunker {}
 
 impl Chunker for SimpleByteChunker {
@@ -125,13 +160,15 @@ pub struct InMemoryVectorIndex {
     doc_to_keys: BTreeMap<DocumentId, Vec<(Vec<f32>, ChunkMetadata)>>,
 }
 
-impl Default for InMemoryVectorIndex {
-    fn default() -> Self {
-        Self {
-            embedding: Arc::new(Mutex::new(RandomEmbedding {})),
-            chunker: Arc::new(Mutex::new(SimpleByteChunker {})),
+impl InMemoryVectorIndex {
+    // TODO: This is pretty useless - we should construct this via the general builder.
+    pub fn create() -> anyhow::Result<Self> {
+        let embedding = EmbeddingClient::create("localhost", 5555)?;
+        Ok(Self {
+            embedding: Arc::new(Mutex::new(embedding)),
+            chunker: Arc::new(Mutex::new(NonoverlappingByteChunker {target_chunk_length: 100})),
             doc_to_keys: Default::default(),
-        }
+        })
     }
 }
 

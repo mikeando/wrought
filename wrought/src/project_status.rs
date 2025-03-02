@@ -3,7 +3,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use crate::{binary16::ContentHash, event_log::EventLog, PackageDirectory, PackageStatus};
+use crate::{binary16::ContentHash, event_log::EventLog, package::{PackageDirectory, PackageStatus}};
 
 pub struct FileRepresentationFromEvents {
     hash: ContentHash,
